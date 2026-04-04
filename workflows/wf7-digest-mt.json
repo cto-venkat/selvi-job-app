@@ -1,0 +1,548 @@
+{
+  "updatedAt": "2026-04-04T14:22:29.078Z",
+  "createdAt": "2026-03-29T11:57:09.409Z",
+  "id": "zJHAtZgCWvj2IDTw",
+  "name": "WF7: Daily Digest",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "7:30 AM Daily",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT j.id, j.title, j.company, j.location, j.salary_raw, j.url, j.tier, j.composite_score, j.job_type, js.reasoning FROM jobs j LEFT JOIN job_scores js ON js.job_id = j.id WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND j.tier IN ('A', 'B') AND j.discovered_at > NOW() - INTERVAL '24 hours' AND j.is_duplicate = false ORDER BY j.composite_score DESC",
+        "options": {}
+      },
+      "id": "get-jobs",
+      "name": "Get A+B Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const jobs = $input.all().map(i => i.json);\nif (jobs.length === 0) return [{ json: { skip: true } }];\nconst aJobs = jobs.filter(j => j.tier === 'A');\nconst bJobs = jobs.filter(j => j.tier === 'B');\nconst date = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\nlet html = '<div style=\"font-family:Arial,sans-serif;max-width:700px;margin:0 auto;\">';\nhtml += '<h2 style=\"color:#1a1a1a;\">Job Digest - ' + date + '</h2>';\nhtml += '<p style=\"color:#555;\">Found <strong>' + aJobs.length + ' strong matches</strong> and <strong>' + bJobs.length + ' worth reviewing</strong>.</p>';\nif (aJobs.length > 0) {\n  html += '<h3 style=\"color:#16a34a;border-bottom:2px solid #16a34a;padding-bottom:4px;\">Strong Matches (Tier A)</h3>';\n  for (const j of aJobs) {\n    html += '<div style=\"margin-bottom:16px;padding:12px;border-left:4px solid #22c55e;background:#f0fdf4;border-radius:4px;\">';\n    html += '<strong><a href=\"' + j.url + '\" style=\"color:#1a1a1a;text-decoration:none;\">' + j.title + '</a></strong><br/>';\n    html += '<span style=\"color:#555;\">' + j.company + ' - ' + j.location + '</span><br/>';\n    if (j.salary_raw) html += '<span style=\"color:#059669;\">' + j.salary_raw + '</span><br/>';\n    html += '<small style=\"color:#888;\">Score: ' + j.composite_score + '/100 | ' + j.job_type + '</small>';\n    if (j.reasoning) html += '<br/><small style=\"color:#666;font-style:italic;\">' + j.reasoning + '</small>';\n    html += '</div>';\n  }\n}\nif (bJobs.length > 0) {\n  html += '<h3 style=\"color:#2563eb;border-bottom:2px solid #2563eb;padding-bottom:4px;\">Worth Reviewing (Tier B)</h3>';\n  for (const j of bJobs) {\n    html += '<div style=\"margin-bottom:12px;padding:8px;border-left:4px solid #3b82f6;background:#eff6ff;border-radius:4px;\">';\n    html += '<strong><a href=\"' + j.url + '\" style=\"color:#1a1a1a;text-decoration:none;\">' + j.title + '</a></strong><br/>';\n    html += '<span style=\"color:#555;\">' + j.company + ' - ' + j.location + '</span><br/>';\n    if (j.salary_raw) html += '<span style=\"color:#2563eb;\">' + j.salary_raw + '</span><br/>';\n    html += '<small style=\"color:#888;\">Score: ' + j.composite_score + '/100</small>';\n    html += '</div>';\n  }\n}\nhtml += '<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0;\"/>';\nhtml += '<p style=\"color:#888;font-size:12px;\">Selvi Job Discovery System</p></div>';\nconst subject = aJobs.length + ' strong + ' + bJobs.length + ' more jobs - ' + new Date().toLocaleDateString('en-GB');\nreturn [{ json: { subject, html, skip: false, total: jobs.length } }];"
+      },
+      "id": "build",
+      "name": "Build Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-send",
+      "name": "Has Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"from\":\"Selvi Jobs <jobs@apiloom.io>\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"{{ $json.subject }}\",\"html\":{{ JSON.stringify($json.html) }}}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send",
+      "name": "Send via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        -50
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log (tenant_id, notification_type, jobs_included, recipient, status) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', 'daily_digest', {{ $json.total || 0 }}, '{{ $('Loop Over Tenants').item.json.notification_email }}', 'sent')",
+        "options": {}
+      },
+      "id": "log",
+      "name": "Log Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1500,
+        -50
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "7:30 AM Daily": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get A+B Jobs": {
+      "main": [
+        [
+          {
+            "node": "Build Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Email": {
+      "main": [
+        [
+          {
+            "node": "Has Jobs?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Jobs?": {
+      "main": [
+        [
+          {
+            "node": "Send via Resend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Send via Resend": {
+      "main": [
+        [
+          {
+            "node": "Log Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get A+B Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:7:30 AM Daily": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+  "activeVersionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+  "versionCounter": 19,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T11:57:09.409Z",
+      "createdAt": "2026-03-29T11:57:09.409Z",
+      "role": "workflow:owner",
+      "workflowId": "zJHAtZgCWvj2IDTw",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-29T11:57:09.418Z",
+    "createdAt": "2026-03-29T11:57:09.418Z",
+    "versionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+    "workflowId": "zJHAtZgCWvj2IDTw",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "30 7 * * *"
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "7:30 AM Daily",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT j.id, j.title, j.company, j.location, j.salary_raw, j.url, j.tier, j.composite_score, j.job_type, js.reasoning FROM jobs j LEFT JOIN job_scores js ON js.job_id = j.id WHERE j.tier IN ('A', 'B') AND j.discovered_at > NOW() - INTERVAL '24 hours' AND j.is_duplicate = false ORDER BY j.composite_score DESC",
+          "options": {}
+        },
+        "id": "get-jobs",
+        "name": "Get A+B Jobs",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const jobs = $input.all().map(i => i.json);\nif (jobs.length === 0) return [{ json: { skip: true } }];\nconst aJobs = jobs.filter(j => j.tier === 'A');\nconst bJobs = jobs.filter(j => j.tier === 'B');\nconst date = new Date().toLocaleDateString('en-GB', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });\nlet html = '<div style=\"font-family:Arial,sans-serif;max-width:700px;margin:0 auto;\">';\nhtml += '<h2 style=\"color:#1a1a1a;\">Job Digest - ' + date + '</h2>';\nhtml += '<p style=\"color:#555;\">Found <strong>' + aJobs.length + ' strong matches</strong> and <strong>' + bJobs.length + ' worth reviewing</strong>.</p>';\nif (aJobs.length > 0) {\n  html += '<h3 style=\"color:#16a34a;border-bottom:2px solid #16a34a;padding-bottom:4px;\">Strong Matches (Tier A)</h3>';\n  for (const j of aJobs) {\n    html += '<div style=\"margin-bottom:16px;padding:12px;border-left:4px solid #22c55e;background:#f0fdf4;border-radius:4px;\">';\n    html += '<strong><a href=\"' + j.url + '\" style=\"color:#1a1a1a;text-decoration:none;\">' + j.title + '</a></strong><br/>';\n    html += '<span style=\"color:#555;\">' + j.company + ' - ' + j.location + '</span><br/>';\n    if (j.salary_raw) html += '<span style=\"color:#059669;\">' + j.salary_raw + '</span><br/>';\n    html += '<small style=\"color:#888;\">Score: ' + j.composite_score + '/100 | ' + j.job_type + '</small>';\n    if (j.reasoning) html += '<br/><small style=\"color:#666;font-style:italic;\">' + j.reasoning + '</small>';\n    html += '</div>';\n  }\n}\nif (bJobs.length > 0) {\n  html += '<h3 style=\"color:#2563eb;border-bottom:2px solid #2563eb;padding-bottom:4px;\">Worth Reviewing (Tier B)</h3>';\n  for (const j of bJobs) {\n    html += '<div style=\"margin-bottom:12px;padding:8px;border-left:4px solid #3b82f6;background:#eff6ff;border-radius:4px;\">';\n    html += '<strong><a href=\"' + j.url + '\" style=\"color:#1a1a1a;text-decoration:none;\">' + j.title + '</a></strong><br/>';\n    html += '<span style=\"color:#555;\">' + j.company + ' - ' + j.location + '</span><br/>';\n    if (j.salary_raw) html += '<span style=\"color:#2563eb;\">' + j.salary_raw + '</span><br/>';\n    html += '<small style=\"color:#888;\">Score: ' + j.composite_score + '/100</small>';\n    html += '</div>';\n  }\n}\nhtml += '<hr style=\"border:none;border-top:1px solid #e5e7eb;margin:24px 0;\"/>';\nhtml += '<p style=\"color:#888;font-size:12px;\">Selvi Job Discovery System</p></div>';\nconst subject = aJobs.length + ' strong + ' + bJobs.length + ' more jobs - ' + new Date().toLocaleDateString('en-GB');\nreturn [{ json: { subject, html, skip: false, total: jobs.length } }];"
+        },
+        "id": "build",
+        "name": "Build Email",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": false,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ]
+          }
+        },
+        "id": "if-send",
+        "name": "Has Jobs?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          660,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"from\":\"Selvi Jobs <jobs@apiloom.io>\",\"to\":[\"chellamma.uk@gmail.com\"],\"subject\":\"{{ $json.subject }}\",\"html\":{{ JSON.stringify($json.html) }}}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "send",
+        "name": "Send via Resend",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          -50
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_log (notification_type, jobs_included, recipient, status) VALUES ('daily_digest', {{ $json.total || 0 }}, 'chellamma.uk@gmail.com', 'sent')",
+          "options": {}
+        },
+        "id": "log",
+        "name": "Log Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1100,
+          -50
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "7:30 AM Daily": {
+        "main": [
+          [
+            {
+              "node": "Get A+B Jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get A+B Jobs": {
+        "main": [
+          [
+            {
+              "node": "Build Email",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Email": {
+        "main": [
+          [
+            {
+              "node": "Has Jobs?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Jobs?": {
+        "main": [
+          [
+            {
+              "node": "Send via Resend",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Send via Resend": {
+        "main": [
+          [
+            {
+              "node": "Log Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-29T11:57:22.961Z",
+        "id": 8,
+        "workflowId": "zJHAtZgCWvj2IDTw",
+        "versionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:29.115Z",
+        "id": 102,
+        "workflowId": "zJHAtZgCWvj2IDTw",
+        "versionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:29.136Z",
+        "id": 103,
+        "workflowId": "zJHAtZgCWvj2IDTw",
+        "versionId": "b0cb334d-5e50-422a-af3e-100a8193370b",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

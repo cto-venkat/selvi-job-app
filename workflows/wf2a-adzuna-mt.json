@@ -1,0 +1,694 @@
+{
+  "updatedAt": "2026-04-04T14:22:24.821Z",
+  "createdAt": "2026-03-29T11:25:57.227Z",
+  "id": "9SEqwV5wggAtEqh7",
+  "name": "WF2a: Adzuna Poller",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 3
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 3 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT search_term, location, salary_min, salary_max FROM search_configs WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND source = 'api' AND is_active = true",
+        "options": {}
+      },
+      "id": "get-configs",
+      "name": "Get Search Configs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "split-batches",
+      "name": "One at a Time",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://api.adzuna.com/v1/api/jobs/gb/search/1",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "app_id",
+              "value": "778c1749"
+            },
+            {
+              "name": "app_key",
+              "value": "f3360c492bb951f7b94e4aa507c99739"
+            },
+            {
+              "name": "what",
+              "value": "={{ $json.search_term }}"
+            },
+            {
+              "name": "where",
+              "value": "={{ $json.location }}"
+            },
+            {
+              "name": "distance",
+              "value": "25"
+            },
+            {
+              "name": "salary_min",
+              "value": "={{ $json.salary_min }}"
+            },
+            {
+              "name": "salary_max",
+              "value": "={{ $json.salary_max }}"
+            },
+            {
+              "name": "sort_by",
+              "value": "date"
+            },
+            {
+              "name": "max_days_old",
+              "value": "3"
+            },
+            {
+              "name": "results_per_page",
+              "value": "50"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 30000,
+          "retry": {
+            "maxTries": 3,
+            "shouldRetry": true
+          }
+        }
+      },
+      "id": "adzuna-api",
+      "name": "Adzuna API",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const results = $input.first().json.results || [];\nreturn results.map(job => ({\n  json: {\n    title: (job.title || '').trim(),\n    company: (job.company?.display_name || 'Unknown').trim(),\n    location: (job.location?.display_name || 'UK').replace(/,\\s*United Kingdom/gi, '').trim(),\n    salary_min: job.salary_min ? Math.round(job.salary_min) : null,\n    salary_max: job.salary_max ? Math.round(job.salary_max) : null,\n    salary_raw: job.salary_min ? `\u00a3${Math.round(job.salary_min).toLocaleString()} - \u00a3${Math.round(job.salary_max).toLocaleString()}` : null,\n    description: (job.description || '').substring(0, 5000),\n    url: job.redirect_url,\n    posted_at: job.created,\n    contract_type: job.contract_type || null,\n    work_type: job.contract_time || null,\n    source: 'adzuna',\n    source_id: String(job.id),\n    category: job.category?.label || null\n  }\n}));"
+      },
+      "id": "map-results",
+      "name": "Map Adzuna Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Normalize and generate dedup hash\nconst crypto = require('crypto');\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nreturn items.map(item => {\n  const d = item.json;\n  const title = (d.title || '').trim();\n  const company = (d.company || 'Unknown').trim();\n  let location = (d.location || 'UK').trim()\n    .replace(/Greater London/gi, 'London')\n    .replace(/South East England/gi, '')\n    .replace(/,\\s*UK$/gi, '').trim();\n  \n  const dedupStr = `${title.toLowerCase()}|${company.toLowerCase()}|${location.toLowerCase()}`;\n  const dedupHash = crypto.createHash('md5').update(dedupStr).digest('hex');\n  \n  const academicKeywords = ['lecturer', 'professor', 'teaching fellow', 'senior lecturer', 'reader'];\n  const jobType = academicKeywords.some(k => title.toLowerCase().includes(k)) ? 'academic' : 'corporate';\n  \n  return { json: { ...d, location, dedup_hash: dedupHash, job_type: jobType, status: 'raw' } };\n});"
+      },
+      "id": "normalize",
+      "name": "Normalize & Hash",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jobs (tenant_id, title, company, location, salary_min, salary_max, salary_raw, description, url, posted_at, contract_type, work_type, job_type, category, dedup_hash, status)\nVALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.title }}', '{{ $json.company }}', '{{ $json.location }}', {{ $json.salary_min || 'NULL' }}, {{ $json.salary_max || 'NULL' }}, {{ $json.salary_raw ? \"'\" + $json.salary_raw.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, '{{ $json.description.replace(/'/g, \"''\").substring(0, 5000) }}', '{{ $json.url }}', {{ $json.posted_at ? \"'\" + $json.posted_at + \"'\" : 'NULL' }}, {{ $json.contract_type ? \"'\" + $json.contract_type + \"'\" : 'NULL' }}, {{ $json.work_type ? \"'\" + $json.work_type + \"'\" : 'NULL' }}, '{{ $json.job_type }}', {{ $json.category ? \"'\" + $json.category + \"'\" : 'NULL' }}, '{{ $json.dedup_hash }}', 'raw')\nON CONFLICT (dedup_hash) WHERE is_duplicate = false DO NOTHING\nRETURNING id;",
+        "options": {}
+      },
+      "id": "upsert-job",
+      "name": "Upsert Job",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1720,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO source_health (tenant_id, source, status, jobs_found) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', 'adzuna', 'ok', {{ $input.all().length }});",
+        "options": {}
+      },
+      "id": "log-health",
+      "name": "Log Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1940,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 3 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Search Configs": {
+      "main": [
+        [
+          {
+            "node": "One at a Time",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "One at a Time": {
+      "main": [
+        [
+          {
+            "node": "Adzuna API",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Adzuna API": {
+      "main": [
+        [
+          {
+            "node": "Map Adzuna Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Map Adzuna Results": {
+      "main": [
+        [
+          {
+            "node": "Normalize & Hash",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize & Hash": {
+      "main": [
+        [
+          {
+            "node": "Upsert Job",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Job": {
+      "main": [
+        [
+          {
+            "node": "Log Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get Search Configs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Health": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 3 Hours": {
+      "recurrenceRules": [
+        21
+      ]
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+  "activeVersionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+  "versionCounter": 69,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T11:25:57.227Z",
+      "createdAt": "2026-03-29T11:25:57.227Z",
+      "role": "workflow:owner",
+      "workflowId": "9SEqwV5wggAtEqh7",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-29T11:25:57.242Z",
+    "createdAt": "2026-03-29T11:25:57.242Z",
+    "versionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+    "workflowId": "9SEqwV5wggAtEqh7",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 3
+              }
+            ]
+          }
+        },
+        "id": "schedule-trigger",
+        "name": "Every 3 Hours",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT search_term, location, salary_min, salary_max FROM search_configs WHERE source = 'api' AND is_active = true",
+          "options": {}
+        },
+        "id": "get-configs",
+        "name": "Get Search Configs",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "split-batches",
+        "name": "One at a Time",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "GET",
+          "url": "https://api.adzuna.com/v1/api/jobs/gb/search/1",
+          "sendQuery": true,
+          "queryParameters": {
+            "parameters": [
+              {
+                "name": "app_id",
+                "value": "778c1749"
+              },
+              {
+                "name": "app_key",
+                "value": "f3360c492bb951f7b94e4aa507c99739"
+              },
+              {
+                "name": "what",
+                "value": "={{ $json.search_term }}"
+              },
+              {
+                "name": "where",
+                "value": "={{ $json.location }}"
+              },
+              {
+                "name": "distance",
+                "value": "25"
+              },
+              {
+                "name": "salary_min",
+                "value": "={{ $json.salary_min }}"
+              },
+              {
+                "name": "salary_max",
+                "value": "={{ $json.salary_max }}"
+              },
+              {
+                "name": "sort_by",
+                "value": "date"
+              },
+              {
+                "name": "max_days_old",
+                "value": "3"
+              },
+              {
+                "name": "results_per_page",
+                "value": "50"
+              }
+            ]
+          },
+          "options": {
+            "timeout": 30000,
+            "retry": {
+              "maxTries": 3,
+              "shouldRetry": true
+            }
+          }
+        },
+        "id": "adzuna-api",
+        "name": "Adzuna API",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          660,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const results = $input.first().json.results || [];\nreturn results.map(job => ({\n  json: {\n    title: (job.title || '').trim(),\n    company: (job.company?.display_name || 'Unknown').trim(),\n    location: (job.location?.display_name || 'UK').replace(/,\\s*United Kingdom/gi, '').trim(),\n    salary_min: job.salary_min ? Math.round(job.salary_min) : null,\n    salary_max: job.salary_max ? Math.round(job.salary_max) : null,\n    salary_raw: job.salary_min ? `\u00a3${Math.round(job.salary_min).toLocaleString()} - \u00a3${Math.round(job.salary_max).toLocaleString()}` : null,\n    description: (job.description || '').substring(0, 5000),\n    url: job.redirect_url,\n    posted_at: job.created,\n    contract_type: job.contract_type || null,\n    work_type: job.contract_time || null,\n    source: 'adzuna',\n    source_id: String(job.id),\n    category: job.category?.label || null\n  }\n}));"
+        },
+        "id": "map-results",
+        "name": "Map Adzuna Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Normalize and generate dedup hash\nconst crypto = require('crypto');\nconst items = $input.all();\nreturn items.map(item => {\n  const d = item.json;\n  const title = (d.title || '').trim();\n  const company = (d.company || 'Unknown').trim();\n  let location = (d.location || 'UK').trim()\n    .replace(/Greater London/gi, 'London')\n    .replace(/South East England/gi, '')\n    .replace(/,\\s*UK$/gi, '').trim();\n  \n  const dedupStr = `${title.toLowerCase()}|${company.toLowerCase()}|${location.toLowerCase()}`;\n  const dedupHash = crypto.createHash('md5').update(dedupStr).digest('hex');\n  \n  const academicKeywords = ['lecturer', 'professor', 'teaching fellow', 'senior lecturer', 'reader'];\n  const jobType = academicKeywords.some(k => title.toLowerCase().includes(k)) ? 'academic' : 'corporate';\n  \n  return { json: { ...d, location, dedup_hash: dedupHash, job_type: jobType, status: 'raw' } };\n});"
+        },
+        "id": "normalize",
+        "name": "Normalize & Hash",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO jobs (title, company, location, salary_min, salary_max, salary_raw, description, url, posted_at, contract_type, work_type, job_type, category, dedup_hash, status)\nVALUES ('{{ $json.title }}', '{{ $json.company }}', '{{ $json.location }}', {{ $json.salary_min || 'NULL' }}, {{ $json.salary_max || 'NULL' }}, {{ $json.salary_raw ? \"'\" + $json.salary_raw.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, '{{ $json.description.replace(/'/g, \"''\").substring(0, 5000) }}', '{{ $json.url }}', {{ $json.posted_at ? \"'\" + $json.posted_at + \"'\" : 'NULL' }}, {{ $json.contract_type ? \"'\" + $json.contract_type + \"'\" : 'NULL' }}, {{ $json.work_type ? \"'\" + $json.work_type + \"'\" : 'NULL' }}, '{{ $json.job_type }}', {{ $json.category ? \"'\" + $json.category + \"'\" : 'NULL' }}, '{{ $json.dedup_hash }}', 'raw')\nON CONFLICT (dedup_hash) WHERE is_duplicate = false DO NOTHING\nRETURNING id;",
+          "options": {}
+        },
+        "id": "upsert-job",
+        "name": "Upsert Job",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1320,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO source_health (source, status, jobs_found) VALUES ('adzuna', 'ok', {{ $input.all().length }});",
+          "options": {}
+        },
+        "id": "log-health",
+        "name": "Log Health",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1540,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 3 Hours": {
+        "main": [
+          [
+            {
+              "node": "Get Search Configs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Search Configs": {
+        "main": [
+          [
+            {
+              "node": "One at a Time",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "One at a Time": {
+        "main": [
+          [
+            {
+              "node": "Adzuna API",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Adzuna API": {
+        "main": [
+          [
+            {
+              "node": "Map Adzuna Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Map Adzuna Results": {
+        "main": [
+          [
+            {
+              "node": "Normalize & Hash",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize & Hash": {
+        "main": [
+          [
+            {
+              "node": "Upsert Job",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upsert Job": {
+        "main": [
+          [
+            {
+              "node": "Log Health",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-29T11:32:16.576Z",
+        "id": 1,
+        "workflowId": "9SEqwV5wggAtEqh7",
+        "versionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:24.864Z",
+        "id": 86,
+        "workflowId": "9SEqwV5wggAtEqh7",
+        "versionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:24.887Z",
+        "id": 87,
+        "workflowId": "9SEqwV5wggAtEqh7",
+        "versionId": "d9c1fb89-1b29-4e46-b356-4dcdd12e4d78",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

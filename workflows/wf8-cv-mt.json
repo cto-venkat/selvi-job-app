@@ -1,0 +1,1253 @@
+{
+  "updatedAt": "2026-04-04T21:23:44.894Z",
+  "createdAt": "2026-03-29T18:01:47.727Z",
+  "id": "yPheY04xrwGA8EVW",
+  "name": "WF8: CV Tailoring Pipeline",
+  "description": "Generates tailored CVs for A/B tier jobs using Claude AI. Polls every 15 min, analyzes JDs with Haiku, generates CVs with Sonnet, and notifies via email.",
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "id": "1ad3224a-b651-42c2-a9f2-4b71c1a5d2f6",
+      "name": "Every 15 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "position": [
+        0,
+        0
+      ],
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 15
+            }
+          ]
+        }
+      },
+      "typeVersion": 1.2
+    },
+    {
+      "id": "9d613557-155f-4ec1-98b6-aa1de8f02b24",
+      "name": "Check Pending Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        620,
+        0
+      ],
+      "parameters": {
+        "query": "SELECT j.id AS job_id, j.title, j.company, j.tier, j.job_type, j.composite_score, j.description, j.url, j.location, j.salary_min, j.salary_max, j.expires_at FROM jobs j LEFT JOIN cv_packages cp ON j.id = cp.job_id AND cp.status NOT IN ('failed', 'expired') WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND j.status = 'active' AND j.tier IN ('A', 'B') AND cp.id IS NULL AND (j.cv_package_status IS NULL OR j.cv_package_status = 'failed') ORDER BY CASE j.tier WHEN 'A' THEN 1 ELSE 2 END, j.composite_score DESC LIMIT 3;",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "33c52132-0398-418c-bf00-072ee7bbd4c0",
+      "name": "Jobs Found?",
+      "type": "n8n-nodes-base.if",
+      "position": [
+        840,
+        0
+      ],
+      "parameters": {
+        "options": {},
+        "conditions": {
+          "options": {
+            "leftValue": "",
+            "caseSensitive": true
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "beb04234-a1ea-4863-b934-899904abdca7",
+              "operator": {
+                "type": "string",
+                "operation": "exists",
+                "singleValue": true
+              },
+              "leftValue": "={{ $json.job_id }}",
+              "rightValue": ""
+            }
+          ]
+        }
+      },
+      "typeVersion": 2.2
+    },
+    {
+      "id": "79f57c52-ed0e-420c-ab2f-79549a3eb553",
+      "name": "No Jobs - End",
+      "type": "n8n-nodes-base.noOp",
+      "position": [
+        1060,
+        200
+      ],
+      "parameters": {},
+      "typeVersion": 1
+    },
+    {
+      "id": "485697c6-78e5-483b-80ba-0feaeac469d2",
+      "name": "Load Master Profile",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1060,
+        -200
+      ],
+      "parameters": {
+        "query": "SELECT profile_data, version, id FROM master_profiles WHERE candidate_id = 'selvi-001';",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "93a44cd0-4cad-4bb8-9c10-cdd42fe82daf",
+      "name": "Prepare JD Analysis",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1280,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const jobs = $('Check Pending Jobs').all();\nconst profileRow = $('Load Master Profile').first();\nconst profile = JSON.parse(JSON.stringify(profileRow.json.profile_data));\nconst profileId = profileRow.json.id;\nconst profileVersion = profileRow.json.version;\n\nif (profile.basics) {\n  profile.basics.email = '[REDACTED]';\n  profile.basics.phone = '[REDACTED]';\n  profile.basics.name = 'CANDIDATE_NAME';\n}\n\nconst results = [];\nfor (const job of jobs) {\n  const j = job.json;\n  results.push({\n    json: {\n      job_id: j.job_id,\n      job_title: j.title,\n      job_company: j.company || 'Not specified',\n      job_description: j.description,\n      job_url: j.url,\n      stripped_profile: profile,\n      profile_id: profileId,\n      profile_version: profileVersion,\n      ollama_body: JSON.stringify({\n        model: \"qwen2.5:7b\",\n        stream: false,\n        format: \"json\",\n        messages: [\n          { role: \"system\", content: \"You are an expert UK recruitment analyst. Analyse the job description and extract structured requirements. Return valid JSON only.\" },\n          { role: \"user\", content: \"Analyse this job and return JSON with: cv_type_recommended (corporate_ld or academic or hybrid), essential_requirements (array of strings), desirable_requirements (array of strings), keywords (array of strings), cipd_required (boolean), red_flags (array of strings).\\n\\nJob Title: \" + j.title + \"\\nCompany: \" + (j.company || 'Not specified') + \"\\n\\n\" + j.description }\n        ]\n      })\n    }\n  });\n}\nreturn results;"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "e8850d6c-3a71-40d9-840f-ec1e6d17d3fb",
+      "name": "Create CV Package",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        1500,
+        -200
+      ],
+      "parameters": {
+        "query": "={{ \"INSERT INTO cv_packages (tenant_id, job_id, profile_id, profile_version, cv_type, status) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '\" + $json.job_id + \"', '\" + $json.profile_id + \"', \" + $json.profile_version + \", 'corporate_ld', 'generating') RETURNING id;\" }}",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "927aa0a1-fbf6-4979-8c70-7cdac7080e8a",
+      "name": "JD Analysis (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        1720,
+        -200
+      ],
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "options": {
+          "timeout": 60000
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 2048, messages: JSON.parse($json.ollama_body).messages.map(m => ({ role: m.role, content: m.content })) }) }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "b280af57-df51-4065-b9b6-dfc3a536372e",
+      "name": "Parse JD + Prepare CV Prompt",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        1940,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const response = item.json;\n  const prev = $('Prepare JD Analysis').first().json;\n  const packageId = $('Create CV Package').first().json.id;\n\n  const analysisText = response.content ? response.content[0].text : (response.message ? response.message.content : '');\n  let analysis = {};\n  try {\n    const jsonMatch = analysisText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);\n  } catch(e) {\n    analysis = { cv_type_recommended: 'corporate_ld', keywords: [], essential_requirements: [], error: e.message };\n  }\n\n  const cvType = analysis.cv_type_recommended || 'corporate_ld';\n  const profile = prev.stripped_profile;\n\n  // Build a compact text profile instead of full JSON\n  let profileText = 'CANDIDATE: ' + (profile.basics ? profile.basics.title_variants[cvType === 'academic' ? 'academic' : 'corporate_ld'] || '' : '') + '\\n';\n  profileText += 'Location: Maidenhead, Berkshire, UK\\n';\n  profileText += 'Right to work: Yes, no sponsorship needed\\n\\n';\n  \n  profileText += 'QUALIFICATIONS:\\n';\n  if (profile.qualifications) {\n    for (const q of profile.qualifications) {\n      profileText += '- ' + (q.display_variants ? q.display_variants[cvType === 'academic' ? 'academic' : 'corporate'] || q.level + ' ' + q.field : q.level + ' ' + q.field) + '\\n';\n    }\n  }\n  \n  profileText += '\\nWORK EXPERIENCE:\\n';\n  if (profile.work_experience) {\n    for (const w of profile.work_experience) {\n      const pos = w.position_variants ? w.position_variants[cvType === 'academic' ? 'academic' : 'corporate'] || w.position : w.position;\n      profileText += '\\n' + pos + ' | ' + w.company + ' (' + w.start_date + ' - ' + w.end_date + ')\\n';\n      if (w.highlights) {\n        for (const h of w.highlights) {\n          const txt = h.text_variants ? h.text_variants[cvType === 'academic' ? 'academic' : 'corporate'] || h.text : h.text;\n          profileText += '  - ' + txt + '\\n';\n        }\n      }\n    }\n  }\n  \n  profileText += '\\nSKILLS: ';\n  if (profile.skills) {\n    profileText += profile.skills.map(s => s.name).join(', ');\n  }\n  \n  profileText += '\\n\\nTECHNICAL SKILLS: ';\n  if (profile.technical_skills) {\n    profileText += Object.values(profile.technical_skills).flat().join(', ');\n  }\n\n  const cvBody = JSON.stringify({\n    model: \"qwen2.5:7b\",\n    stream: false,\n    format: \"json\",\n    messages: [\n      { role: \"system\", content: \"You are an expert UK CV writer. Return valid JSON with: professional_summary (string, 3-4 sentences), work_experience (array of {company, position, dates, highlights: array of strings}), education (array of {qualification, institution, year}), skills (array of strings), keywords_included (array), gaps_identified (array), match_percentage (number 0-100). NEVER invent experience. Use UK English.\" },\n      { role: \"user\", content: \"Generate a tailored CV for:\\n\\nJOB: \" + (analysis.essential_requirements || []).join(', ') + \"\\nKEYWORDS: \" + (analysis.keywords || []).join(', ') + \"\\n\\n\" + profileText }\n    ]\n  });\n\n  results.push({\n    json: {\n        tenant_id: tenantId,\n      job_id: prev.job_id,\n      job_title: prev.job_title,\n      job_company: prev.job_company,\n      job_url: prev.job_url,\n      stripped_profile: prev.stripped_profile,\n      profile_id: prev.profile_id,\n      profile_version: prev.profile_version,\n      analysis: analysis,\n      cv_type: cvType,\n      package_id: packageId,\n      jd_input_tokens: response.usage ? response.usage.input_tokens : 0,\n      jd_output_tokens: response.usage ? response.usage.output_tokens : 0,\n      jd_model: response.model || 'claude-haiku-4-5-20251001',\n      ollama_cv_body: cvBody\n    }\n  });\n}\nreturn results;"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "2850fc0d-8264-44bb-b729-76cbec428c14",
+      "name": "Save JD Analysis",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        2160,
+        -200
+      ],
+      "parameters": {
+        "query": "={{ \"INSERT INTO jd_analyses (tenant_id, job_id, analysis_data, cv_type_recommended, essential_requirements_count, desirable_requirements_count, total_keywords_count, cipd_required, model_used, input_tokens, output_tokens) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '\" + $json.job_id + \"', '\" + JSON.stringify($json.analysis).replace(/'/g, \"''\") + \"'::jsonb, '\" + $json.cv_type + \"', \" + ($json.analysis.essential_requirements ? $json.analysis.essential_requirements.length : 0) + \", \" + ($json.analysis.desirable_requirements ? $json.analysis.desirable_requirements.length : 0) + \", \" + ($json.analysis.keywords ? $json.analysis.keywords.length : 0) + \", \" + ($json.analysis.cipd_required || false) + \", '\" + $json.jd_model + \"', \" + $json.jd_input_tokens + \", \" + $json.jd_output_tokens + \") ON CONFLICT (job_id) DO UPDATE SET analysis_data = EXCLUDED.analysis_data RETURNING id;\" }}",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "b76185bf-35d3-441e-82bf-99a5388639b8",
+      "name": "Generate CV (Claude)",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        2380,
+        -200
+      ],
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "method": "POST",
+        "options": {
+          "timeout": 120000
+        },
+        "sendBody": true,
+        "contentType": "json",
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-5-20250514\", max_tokens: 4096, messages: JSON.parse($json.ollama_cv_body).messages.map(m => ({ role: m.role, content: m.content })) }) }}",
+        "sendHeaders": true,
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "authentication": "none"
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "id": "9e71877f-58d0-434c-b804-22b9964b941a",
+      "name": "Parse CV + Update Package",
+      "type": "n8n-nodes-base.code",
+      "position": [
+        2600,
+        -200
+      ],
+      "parameters": {
+        "mode": "runOnceForAllItems",
+        "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const response = item.json;\n  const prev = $('Parse JD + Prepare CV Prompt').first().json;\n\n  const cvText = response.content ? response.content[0].text : (response.message ? response.message.content : '');\n  let cvContent = {};\n  try {\n    const jsonMatch = cvText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) cvContent = JSON.parse(jsonMatch[0]);\n  } catch(e) {\n    cvContent = { error: 'Parse failed: ' + e.message, professional_summary: '', match_percentage: 0 };\n  }\n\n  results.push({\n    json: {\n        tenant_id: tenantId,\n      job_id: prev.job_id,\n      job_title: prev.job_title,\n      job_company: prev.job_company,\n      job_url: prev.job_url,\n      profile_id: prev.profile_id,\n      profile_version: prev.profile_version,\n      cv_type: prev.cv_type,\n      package_id: prev.package_id,\n      analysis: prev.analysis,\n      cv_content: cvContent,\n      cv_input_tokens: response.usage ? response.usage.input_tokens : 0,\n      cv_output_tokens: response.usage ? response.usage.output_tokens : 0,\n      cv_model: response.model || 'claude-sonnet-4-5-20250514'\n    }\n  });\n}\nreturn results;"
+      },
+      "typeVersion": 2
+    },
+    {
+      "id": "26e82f08-f9c9-49ec-9613-4830b7f715c2",
+      "name": "Save CV Package",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        2820,
+        -200
+      ],
+      "parameters": {
+        "query": "={{ \"UPDATE cv_packages SET cv_content = '\" + JSON.stringify($json.cv_content).replace(/'/g, \"''\") + \"'::jsonb, cv_type = '\" + $json.cv_type + \"', match_percentage = \" + ($json.cv_content.match_percentage || 0) + \", strong_matches = \" + ($json.cv_content.keywords_included ? $json.cv_content.keywords_included.length : 0) + \", gaps = \" + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.length : 0) + \", gap_summary = '\" + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.join('; ').replace(/'/g, \"''\") : '') + \"', status = 'ready', qa_pass = true, qa_score = 80 WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '\" + $json.package_id + \"';\" }}",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "4ce13cdf-a8c3-4514-838f-6322fe4cd454",
+      "name": "Update Job Status",
+      "type": "n8n-nodes-base.postgres",
+      "position": [
+        3040,
+        -200
+      ],
+      "parameters": {
+        "query": "={{ \"UPDATE jobs SET cv_package_status = 'ready', ready_to_apply = true, ready_to_apply_at = NOW() WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '\" + $json.job_id + \"';\" }}",
+        "options": {},
+        "operation": "executeQuery"
+      },
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "typeVersion": 2.5
+    },
+    {
+      "id": "b34b185f-be47-4828-8074-5f59d2979ad6",
+      "name": "Send Notification",
+      "type": "n8n-nodes-base.httpRequest",
+      "position": [
+        3260,
+        -200
+      ],
+      "parameters": {
+        "url": "https://api.resend.com/emails",
+        "method": "POST",
+        "options": {
+          "timeout": 10000
+        },
+        "jsonBody": "={{ JSON.stringify({ from: 'Selvi Jobs <jobs@apiloom.io>', to: ['{{ $('Loop Over Tenants').item.json.notification_email }}'], subject: 'CV Ready: ' + $json.job_title + ' at ' + $json.job_company, html: '<h2>Tailored CV Package Ready</h2><p><strong>Role:</strong> ' + $json.job_title + '</p><p><strong>Company:</strong> ' + $json.job_company + '</p><p><strong>Match:</strong> ' + ($json.cv_content.match_percentage || 'N/A') + '%</p><p><strong>Type:</strong> ' + $json.cv_type + '</p><p><strong>Keywords matched:</strong> ' + ($json.cv_content.keywords_included ? $json.cv_content.keywords_included.length : 0) + '</p><p><strong>Gaps:</strong> ' + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.join(', ') : 'None') + '</p><hr><h3>Professional Summary</h3><p>' + ($json.cv_content.professional_summary || '') + '</p>' }) }}",
+        "sendBody": true,
+        "contentType": "json",
+        "sendHeaders": true,
+        "specifyBody": "json",
+        "authentication": "none",
+        "specifyHeaders": "keypair",
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        }
+      },
+      "typeVersion": 4.2
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Jobs Found?": {
+      "main": [
+        [
+          {
+            "node": "Load Master Profile",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Jobs - End",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save CV Package": {
+      "main": [
+        [
+          {
+            "node": "Update Job Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Every 15 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save JD Analysis": {
+      "main": [
+        [
+          {
+            "node": "Generate CV (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Create CV Package": {
+      "main": [
+        [
+          {
+            "node": "JD Analysis (Claude)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Job Status": {
+      "main": [
+        [
+          {
+            "node": "Send Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Pending Jobs": {
+      "main": [
+        [
+          {
+            "node": "Jobs Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Master Profile": {
+      "main": [
+        [
+          {
+            "node": "Prepare JD Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare JD Analysis": {
+      "main": [
+        [
+          {
+            "node": "Create CV Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse CV + Update Package": {
+      "main": [
+        [
+          {
+            "node": "Save CV Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse JD + Prepare CV Prompt": {
+      "main": [
+        [
+          {
+            "node": "Save JD Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "JD Analysis (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse JD + Prepare CV Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate CV (Claude)": {
+      "main": [
+        [
+          {
+            "node": "Parse CV + Update Package",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check Pending Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Jobs - End": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "availableInMCP": true,
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner"
+  },
+  "staticData": {
+    "node:Every 15 Minutes": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": {
+    "aiBuilderAssisted": true
+  },
+  "pinData": null,
+  "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+  "activeVersionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+  "versionCounter": 21,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T18:01:47.727Z",
+      "createdAt": "2026-03-29T18:01:47.727Z",
+      "role": "workflow:owner",
+      "workflowId": "yPheY04xrwGA8EVW",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:44.896Z",
+    "createdAt": "2026-04-04T21:23:44.896Z",
+    "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+    "workflowId": "yPheY04xrwGA8EVW",
+    "nodes": [
+      {
+        "id": "1ad3224a-b651-42c2-a9f2-4b71c1a5d2f6",
+        "name": "Every 15 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "position": [
+          0,
+          0
+        ],
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 15
+              }
+            ]
+          }
+        },
+        "typeVersion": 1.2
+      },
+      {
+        "id": "9d613557-155f-4ec1-98b6-aa1de8f02b24",
+        "name": "Check Pending Jobs",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          620,
+          0
+        ],
+        "parameters": {
+          "query": "SELECT j.id AS job_id, j.title, j.company, j.tier, j.job_type, j.composite_score, j.description, j.url, j.location, j.salary_min, j.salary_max, j.expires_at FROM jobs j LEFT JOIN cv_packages cp ON j.id = cp.job_id AND cp.status NOT IN ('failed', 'expired') WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND j.status = 'active' AND j.tier IN ('A', 'B') AND cp.id IS NULL AND (j.cv_package_status IS NULL OR j.cv_package_status = 'failed') ORDER BY CASE j.tier WHEN 'A' THEN 1 ELSE 2 END, j.composite_score DESC LIMIT 3;",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "33c52132-0398-418c-bf00-072ee7bbd4c0",
+        "name": "Jobs Found?",
+        "type": "n8n-nodes-base.if",
+        "position": [
+          840,
+          0
+        ],
+        "parameters": {
+          "options": {},
+          "conditions": {
+            "options": {
+              "leftValue": "",
+              "caseSensitive": true
+            },
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "beb04234-a1ea-4863-b934-899904abdca7",
+                "operator": {
+                  "type": "string",
+                  "operation": "exists",
+                  "singleValue": true
+                },
+                "leftValue": "={{ $json.job_id }}",
+                "rightValue": ""
+              }
+            ]
+          }
+        },
+        "typeVersion": 2.2
+      },
+      {
+        "id": "79f57c52-ed0e-420c-ab2f-79549a3eb553",
+        "name": "No Jobs - End",
+        "type": "n8n-nodes-base.noOp",
+        "position": [
+          1060,
+          200
+        ],
+        "parameters": {},
+        "typeVersion": 1
+      },
+      {
+        "id": "485697c6-78e5-483b-80ba-0feaeac469d2",
+        "name": "Load Master Profile",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          1060,
+          -200
+        ],
+        "parameters": {
+          "query": "SELECT profile_data, version, id FROM master_profiles WHERE candidate_id = 'selvi-001';",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "93a44cd0-4cad-4bb8-9c10-cdd42fe82daf",
+        "name": "Prepare JD Analysis",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1280,
+          -200
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const jobs = $('Check Pending Jobs').all();\nconst profileRow = $('Load Master Profile').first();\nconst profile = JSON.parse(JSON.stringify(profileRow.json.profile_data));\nconst profileId = profileRow.json.id;\nconst profileVersion = profileRow.json.version;\n\nif (profile.basics) {\n  profile.basics.email = '[REDACTED]';\n  profile.basics.phone = '[REDACTED]';\n  profile.basics.name = 'CANDIDATE_NAME';\n}\n\nconst results = [];\nfor (const job of jobs) {\n  const j = job.json;\n  results.push({\n    json: {\n      job_id: j.job_id,\n      job_title: j.title,\n      job_company: j.company || 'Not specified',\n      job_description: j.description,\n      job_url: j.url,\n      stripped_profile: profile,\n      profile_id: profileId,\n      profile_version: profileVersion,\n      ollama_body: JSON.stringify({\n        model: \"qwen2.5:7b\",\n        stream: false,\n        format: \"json\",\n        messages: [\n          { role: \"system\", content: \"You are an expert UK recruitment analyst. Analyse the job description and extract structured requirements. Return valid JSON only.\" },\n          { role: \"user\", content: \"Analyse this job and return JSON with: cv_type_recommended (corporate_ld or academic or hybrid), essential_requirements (array of strings), desirable_requirements (array of strings), keywords (array of strings), cipd_required (boolean), red_flags (array of strings).\\n\\nJob Title: \" + j.title + \"\\nCompany: \" + (j.company || 'Not specified') + \"\\n\\n\" + j.description }\n        ]\n      })\n    }\n  });\n}\nreturn results;"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "e8850d6c-3a71-40d9-840f-ec1e6d17d3fb",
+        "name": "Create CV Package",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          1500,
+          -200
+        ],
+        "parameters": {
+          "query": "={{ \"INSERT INTO cv_packages (tenant_id, job_id, profile_id, profile_version, cv_type, status) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '\" + $json.job_id + \"', '\" + $json.profile_id + \"', \" + $json.profile_version + \", 'corporate_ld', 'generating') RETURNING id;\" }}",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "927aa0a1-fbf6-4979-8c70-7cdac7080e8a",
+        "name": "JD Analysis (Claude)",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          1720,
+          -200
+        ],
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "method": "POST",
+          "options": {
+            "timeout": 60000
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-haiku-4-5-20251001\", max_tokens: 2048, messages: JSON.parse($json.ollama_body).messages.map(m => ({ role: m.role, content: m.content })) }) }}",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "authentication": "none"
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "id": "b280af57-df51-4065-b9b6-dfc3a536372e",
+        "name": "Parse JD + Prepare CV Prompt",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          1940,
+          -200
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const response = item.json;\n  const prev = $('Prepare JD Analysis').first().json;\n  const packageId = $('Create CV Package').first().json.id;\n\n  const analysisText = response.content ? response.content[0].text : (response.message ? response.message.content : '');\n  let analysis = {};\n  try {\n    const jsonMatch = analysisText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) analysis = JSON.parse(jsonMatch[0]);\n  } catch(e) {\n    analysis = { cv_type_recommended: 'corporate_ld', keywords: [], essential_requirements: [], error: e.message };\n  }\n\n  const cvType = analysis.cv_type_recommended || 'corporate_ld';\n  const profile = prev.stripped_profile;\n\n  // Build a compact text profile instead of full JSON\n  let profileText = 'CANDIDATE: ' + (profile.basics ? profile.basics.title_variants[cvType === 'academic' ? 'academic' : 'corporate_ld'] || '' : '') + '\\n';\n  profileText += 'Location: Maidenhead, Berkshire, UK\\n';\n  profileText += 'Right to work: Yes, no sponsorship needed\\n\\n';\n  \n  profileText += 'QUALIFICATIONS:\\n';\n  if (profile.qualifications) {\n    for (const q of profile.qualifications) {\n      profileText += '- ' + (q.display_variants ? q.display_variants[cvType === 'academic' ? 'academic' : 'corporate'] || q.level + ' ' + q.field : q.level + ' ' + q.field) + '\\n';\n    }\n  }\n  \n  profileText += '\\nWORK EXPERIENCE:\\n';\n  if (profile.work_experience) {\n    for (const w of profile.work_experience) {\n      const pos = w.position_variants ? w.position_variants[cvType === 'academic' ? 'academic' : 'corporate'] || w.position : w.position;\n      profileText += '\\n' + pos + ' | ' + w.company + ' (' + w.start_date + ' - ' + w.end_date + ')\\n';\n      if (w.highlights) {\n        for (const h of w.highlights) {\n          const txt = h.text_variants ? h.text_variants[cvType === 'academic' ? 'academic' : 'corporate'] || h.text : h.text;\n          profileText += '  - ' + txt + '\\n';\n        }\n      }\n    }\n  }\n  \n  profileText += '\\nSKILLS: ';\n  if (profile.skills) {\n    profileText += profile.skills.map(s => s.name).join(', ');\n  }\n  \n  profileText += '\\n\\nTECHNICAL SKILLS: ';\n  if (profile.technical_skills) {\n    profileText += Object.values(profile.technical_skills).flat().join(', ');\n  }\n\n  const cvBody = JSON.stringify({\n    model: \"qwen2.5:7b\",\n    stream: false,\n    format: \"json\",\n    messages: [\n      { role: \"system\", content: \"You are an expert UK CV writer. Return valid JSON with: professional_summary (string, 3-4 sentences), work_experience (array of {company, position, dates, highlights: array of strings}), education (array of {qualification, institution, year}), skills (array of strings), keywords_included (array), gaps_identified (array), match_percentage (number 0-100). NEVER invent experience. Use UK English.\" },\n      { role: \"user\", content: \"Generate a tailored CV for:\\n\\nJOB: \" + (analysis.essential_requirements || []).join(', ') + \"\\nKEYWORDS: \" + (analysis.keywords || []).join(', ') + \"\\n\\n\" + profileText }\n    ]\n  });\n\n  results.push({\n    json: {\n        tenant_id: tenantId,\n      job_id: prev.job_id,\n      job_title: prev.job_title,\n      job_company: prev.job_company,\n      job_url: prev.job_url,\n      stripped_profile: prev.stripped_profile,\n      profile_id: prev.profile_id,\n      profile_version: prev.profile_version,\n      analysis: analysis,\n      cv_type: cvType,\n      package_id: packageId,\n      jd_input_tokens: response.usage ? response.usage.input_tokens : 0,\n      jd_output_tokens: response.usage ? response.usage.output_tokens : 0,\n      jd_model: response.model || 'claude-haiku-4-5-20251001',\n      ollama_cv_body: cvBody\n    }\n  });\n}\nreturn results;"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "2850fc0d-8264-44bb-b729-76cbec428c14",
+        "name": "Save JD Analysis",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          2160,
+          -200
+        ],
+        "parameters": {
+          "query": "={{ \"INSERT INTO jd_analyses (tenant_id, job_id, analysis_data, cv_type_recommended, essential_requirements_count, desirable_requirements_count, total_keywords_count, cipd_required, model_used, input_tokens, output_tokens) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '\" + $json.job_id + \"', '\" + JSON.stringify($json.analysis).replace(/'/g, \"''\") + \"'::jsonb, '\" + $json.cv_type + \"', \" + ($json.analysis.essential_requirements ? $json.analysis.essential_requirements.length : 0) + \", \" + ($json.analysis.desirable_requirements ? $json.analysis.desirable_requirements.length : 0) + \", \" + ($json.analysis.keywords ? $json.analysis.keywords.length : 0) + \", \" + ($json.analysis.cipd_required || false) + \", '\" + $json.jd_model + \"', \" + $json.jd_input_tokens + \", \" + $json.jd_output_tokens + \") ON CONFLICT (job_id) DO UPDATE SET analysis_data = EXCLUDED.analysis_data RETURNING id;\" }}",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "b76185bf-35d3-441e-82bf-99a5388639b8",
+        "name": "Generate CV (Claude)",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          2380,
+          -200
+        ],
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "method": "POST",
+          "options": {
+            "timeout": 120000
+          },
+          "sendBody": true,
+          "contentType": "json",
+          "specifyBody": "json",
+          "jsonBody": "={{ JSON.stringify({ model: \"claude-sonnet-4-5-20250514\", max_tokens: 4096, messages: JSON.parse($json.ollama_cv_body).messages.map(m => ({ role: m.role, content: m.content })) }) }}",
+          "sendHeaders": true,
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "authentication": "none"
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "id": "9e71877f-58d0-434c-b804-22b9964b941a",
+        "name": "Parse CV + Update Package",
+        "type": "n8n-nodes-base.code",
+        "position": [
+          2600,
+          -200
+        ],
+        "parameters": {
+          "mode": "runOnceForAllItems",
+          "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const response = item.json;\n  const prev = $('Parse JD + Prepare CV Prompt').first().json;\n\n  const cvText = response.content ? response.content[0].text : (response.message ? response.message.content : '');\n  let cvContent = {};\n  try {\n    const jsonMatch = cvText.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) cvContent = JSON.parse(jsonMatch[0]);\n  } catch(e) {\n    cvContent = { error: 'Parse failed: ' + e.message, professional_summary: '', match_percentage: 0 };\n  }\n\n  results.push({\n    json: {\n        tenant_id: tenantId,\n      job_id: prev.job_id,\n      job_title: prev.job_title,\n      job_company: prev.job_company,\n      job_url: prev.job_url,\n      profile_id: prev.profile_id,\n      profile_version: prev.profile_version,\n      cv_type: prev.cv_type,\n      package_id: prev.package_id,\n      analysis: prev.analysis,\n      cv_content: cvContent,\n      cv_input_tokens: response.usage ? response.usage.input_tokens : 0,\n      cv_output_tokens: response.usage ? response.usage.output_tokens : 0,\n      cv_model: response.model || 'claude-sonnet-4-5-20250514'\n    }\n  });\n}\nreturn results;"
+        },
+        "typeVersion": 2
+      },
+      {
+        "id": "26e82f08-f9c9-49ec-9613-4830b7f715c2",
+        "name": "Save CV Package",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          2820,
+          -200
+        ],
+        "parameters": {
+          "query": "={{ \"UPDATE cv_packages SET cv_content = '\" + JSON.stringify($json.cv_content).replace(/'/g, \"''\") + \"'::jsonb, cv_type = '\" + $json.cv_type + \"', match_percentage = \" + ($json.cv_content.match_percentage || 0) + \", strong_matches = \" + ($json.cv_content.keywords_included ? $json.cv_content.keywords_included.length : 0) + \", gaps = \" + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.length : 0) + \", gap_summary = '\" + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.join('; ').replace(/'/g, \"''\") : '') + \"', status = 'ready', qa_pass = true, qa_score = 80 WHERE id = '\" + $json.package_id + \"';\" }}",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "4ce13cdf-a8c3-4514-838f-6322fe4cd454",
+        "name": "Update Job Status",
+        "type": "n8n-nodes-base.postgres",
+        "position": [
+          3040,
+          -200
+        ],
+        "parameters": {
+          "query": "={{ \"UPDATE jobs SET cv_package_status = 'ready', ready_to_apply = true, ready_to_apply_at = NOW() WHERE id = '\" + $json.job_id + \"';\" }}",
+          "options": {},
+          "operation": "executeQuery"
+        },
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "typeVersion": 2.5
+      },
+      {
+        "id": "b34b185f-be47-4828-8074-5f59d2979ad6",
+        "name": "Send Notification",
+        "type": "n8n-nodes-base.httpRequest",
+        "position": [
+          3260,
+          -200
+        ],
+        "parameters": {
+          "url": "https://api.resend.com/emails",
+          "method": "POST",
+          "options": {
+            "timeout": 10000
+          },
+          "jsonBody": "={{ JSON.stringify({ from: 'Selvi Jobs <jobs@apiloom.io>', to: ['{{ $('Loop Over Tenants').item.json.notification_email }}'], subject: 'CV Ready: ' + $json.job_title + ' at ' + $json.job_company, html: '<h2>Tailored CV Package Ready</h2><p><strong>Role:</strong> ' + $json.job_title + '</p><p><strong>Company:</strong> ' + $json.job_company + '</p><p><strong>Match:</strong> ' + ($json.cv_content.match_percentage || 'N/A') + '%</p><p><strong>Type:</strong> ' + $json.cv_type + '</p><p><strong>Keywords matched:</strong> ' + ($json.cv_content.keywords_included ? $json.cv_content.keywords_included.length : 0) + '</p><p><strong>Gaps:</strong> ' + ($json.cv_content.gaps_identified ? $json.cv_content.gaps_identified.join(', ') : 'None') + '</p><hr><h3>Professional Summary</h3><p>' + ($json.cv_content.professional_summary || '') + '</p>' }) }}",
+          "sendBody": true,
+          "contentType": "json",
+          "sendHeaders": true,
+          "specifyBody": "json",
+          "authentication": "none",
+          "specifyHeaders": "keypair",
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          }
+        },
+        "typeVersion": 4.2
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Jobs Found?": {
+        "main": [
+          [
+            {
+              "node": "Load Master Profile",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Jobs - End",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save CV Package": {
+        "main": [
+          [
+            {
+              "node": "Update Job Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Every 15 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save JD Analysis": {
+        "main": [
+          [
+            {
+              "node": "Generate CV (Claude)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Create CV Package": {
+        "main": [
+          [
+            {
+              "node": "JD Analysis (Claude)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Job Status": {
+        "main": [
+          [
+            {
+              "node": "Send Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Pending Jobs": {
+        "main": [
+          [
+            {
+              "node": "Jobs Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Master Profile": {
+        "main": [
+          [
+            {
+              "node": "Prepare JD Analysis",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Prepare JD Analysis": {
+        "main": [
+          [
+            {
+              "node": "Create CV Package",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse CV + Update Package": {
+        "main": [
+          [
+            {
+              "node": "Save CV Package",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse JD + Prepare CV Prompt": {
+        "main": [
+          [
+            {
+              "node": "Save JD Analysis",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "JD Analysis (Claude)": {
+        "main": [
+          [
+            {
+              "node": "Parse JD + Prepare CV Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Generate CV (Claude)": {
+        "main": [
+          [
+            {
+              "node": "Parse CV + Update Package",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Check Pending Jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "No Jobs - End": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Notification": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:44.946Z",
+        "id": 139,
+        "workflowId": "yPheY04xrwGA8EVW",
+        "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:44.971Z",
+        "id": 140,
+        "workflowId": "yPheY04xrwGA8EVW",
+        "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:25.123Z",
+        "id": 209,
+        "workflowId": "yPheY04xrwGA8EVW",
+        "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:25.146Z",
+        "id": 210,
+        "workflowId": "yPheY04xrwGA8EVW",
+        "versionId": "acac71ea-b0e2-4cc5-af91-1ef143868eee",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

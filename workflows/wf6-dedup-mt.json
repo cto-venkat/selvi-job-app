@@ -1,0 +1,533 @@
+{
+  "updatedAt": "2026-04-04T21:23:57.167Z",
+  "createdAt": "2026-03-29T11:31:29.424Z",
+  "id": "Enk5MDTwxi0zHjzS",
+  "name": "WF6: Dedup & Cleanup",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 4
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Every 4 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH dupes AS (SELECT a.id as dup_id, b.id as keep_id FROM jobs a JOIN jobs b ON a.id > b.id AND a.dedup_hash = b.dedup_hash WHERE a.tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND b.tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND a.is_duplicate = false AND b.is_duplicate = false) UPDATE jobs SET is_duplicate = true, duplicate_of = dupes.keep_id FROM dupes WHERE jobs.tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND jobs.id = dupes.dup_id",
+        "options": {}
+      },
+      "id": "exact-dedup",
+      "name": "Exact Hash Dedup",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        650,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE jobs SET status = 'expired' WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND status IN ('raw', 'scored') AND (expires_at < NOW() OR discovered_at < NOW() - INTERVAL '30 days')",
+        "options": {}
+      },
+      "id": "expire",
+      "name": "Expire Old Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        900,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE job_sources SET raw_data = NULL WHERE captured_at < NOW() - INTERVAL '14 days' AND raw_data IS NOT NULL",
+        "options": {}
+      },
+      "id": "clean-raw",
+      "name": "Clean Raw Data",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1150,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM source_health WHERE checked_at < NOW() - INTERVAL '30 days'",
+        "options": {}
+      },
+      "id": "clean-health",
+      "name": "Clean Health Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1400,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 4 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Exact Hash Dedup": {
+      "main": [
+        [
+          {
+            "node": "Expire Old Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Expire Old Jobs": {
+      "main": [
+        [
+          {
+            "node": "Clean Raw Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Raw Data": {
+      "main": [
+        [
+          {
+            "node": "Clean Health Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Exact Hash Dedup",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Clean Health Log": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 4 Hours": {
+      "recurrenceRules": [
+        20
+      ]
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+  "activeVersionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+  "versionCounter": 61,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T11:31:29.424Z",
+      "createdAt": "2026-03-29T11:31:29.424Z",
+      "role": "workflow:owner",
+      "workflowId": "Enk5MDTwxi0zHjzS",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:57.169Z",
+    "createdAt": "2026-04-04T21:23:57.169Z",
+    "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+    "workflowId": "Enk5MDTwxi0zHjzS",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 4
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Every 4 Hours",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "WITH dupes AS (SELECT a.id as dup_id, b.id as keep_id FROM jobs a JOIN jobs b ON a.id > b.id AND a.dedup_hash = b.dedup_hash WHERE a.is_duplicate = false AND b.is_duplicate = false) UPDATE jobs SET is_duplicate = true, duplicate_of = dupes.keep_id FROM dupes WHERE jobs.id = dupes.dup_id",
+          "options": {}
+        },
+        "id": "exact-dedup",
+        "name": "Exact Hash Dedup",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          650,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE jobs SET status = 'expired' WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND status IN ('raw', 'scored') AND (expires_at < NOW() OR discovered_at < NOW() - INTERVAL '30 days')",
+          "options": {}
+        },
+        "id": "expire",
+        "name": "Expire Old Jobs",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          900,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE job_sources SET raw_data = NULL WHERE captured_at < NOW() - INTERVAL '14 days' AND raw_data IS NOT NULL",
+          "options": {}
+        },
+        "id": "clean-raw",
+        "name": "Clean Raw Data",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1150,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "DELETE FROM source_health WHERE checked_at < NOW() - INTERVAL '30 days'",
+          "options": {}
+        },
+        "id": "clean-health",
+        "name": "Clean Health Log",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1400,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Every 4 Hours": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Exact Hash Dedup": {
+        "main": [
+          [
+            {
+              "node": "Expire Old Jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Expire Old Jobs": {
+        "main": [
+          [
+            {
+              "node": "Clean Raw Data",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Clean Raw Data": {
+        "main": [
+          [
+            {
+              "node": "Clean Health Log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Exact Hash Dedup",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Clean Health Log": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:57.204Z",
+        "id": 157,
+        "workflowId": "Enk5MDTwxi0zHjzS",
+        "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:57.223Z",
+        "id": 158,
+        "workflowId": "Enk5MDTwxi0zHjzS",
+        "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:24.067Z",
+        "id": 205,
+        "workflowId": "Enk5MDTwxi0zHjzS",
+        "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:24.091Z",
+        "id": 206,
+        "workflowId": "Enk5MDTwxi0zHjzS",
+        "versionId": "2ea293ed-3859-48d3-81c9-6de0ca2eaf77",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

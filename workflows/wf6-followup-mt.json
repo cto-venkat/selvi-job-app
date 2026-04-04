@@ -1,0 +1,1362 @@
+{
+  "updatedAt": "2026-04-04T14:22:26.319Z",
+  "createdAt": "2026-04-02T17:13:55.428Z",
+  "id": "u16sM5nWU7lggkqh",
+  "name": "WF6-FOLLOWUP: Post-Interview Workflow",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 1
+            }
+          ]
+        }
+      },
+      "id": "hourly-trigger",
+      "name": "Every Hour",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.application_id FROM interviews i WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND i.interview_date = CURRENT_DATE AND (i.interview_date || ' ' || COALESCE(i.interview_end_time::text, '23:59:59'))::timestamp < NOW() AND i.status IN ('calendared', 'prep_ready', 'confirmed') LIMIT 10;",
+        "options": {}
+      },
+      "id": "find-completed",
+      "name": "Find Recently Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-completed",
+              "leftValue": "={{ $json.interview_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-completed",
+      "name": "Any Completed?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE interviews SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $json.interview_id }}' AND status IN ('calendared', 'prep_ready', 'confirmed') RETURNING id, company_name, role_title;",
+        "options": {}
+      },
+      "id": "mark-completed",
+      "name": "Mark as Completed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE applications SET status = 'interviewed', updated_at = NOW() WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $json.application_id }}' AND '{{ $json.application_id }}' != '' AND '{{ $json.application_id }}' IS NOT NULL;",
+        "options": {}
+      },
+      "id": "update-app-status",
+      "name": "Update App Status (M4)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interviewer_names, i.interviewer_titles, i.completed_at FROM interviews i WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND i.status = 'completed' AND i.completed_at < NOW() - INTERVAL '60 minutes' AND i.completed_at > NOW() - INTERVAL '24 hours' AND NOT EXISTS (SELECT 1 FROM interview_communications ic WHERE ic.interview_id = i.id AND ic.communication_type = 'debrief_reminder') LIMIT 10;",
+        "options": {}
+      },
+      "id": "find-need-debrief",
+      "name": "Find Needing Debrief",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-debrief",
+              "leftValue": "={{ $json.interview_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-debrief-needed",
+      "name": "Need Debrief?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"Debrief: {{ $json.company_name }} - {{ $json.role_title }} (today)\",\n  \"html\": \"<h2>Post-Interview Debrief</h2><h3>{{ $json.company_name }} &mdash; {{ $json.role_title }}</h3><p>How did the {{ ($json.interview_format || '').replace(/_/g, ' ') }} interview go?</p><div style='background:#f0f8ff;padding:16px;border-radius:8px;margin:16px 0;'><h4>Quick Debrief</h4><p>Reply with a rating (1-5) and one sentence:</p><ul><li><strong>1</strong> = Went poorly, major concerns</li><li><strong>2</strong> = Below expectations</li><li><strong>3</strong> = Average, neither good nor bad</li><li><strong>4</strong> = Went well, positive signals</li><li><strong>5</strong> = Excellent, very confident</li></ul><p><em>Example: '4 - Good rapport with panel, strong STAR examples on stakeholder management, asked about digital learning strategy'</em></p></div><div style='background:#fff8e7;padding:16px;border-radius:8px;margin:16px 0;'><h4>Full Debrief (optional)</h4><ul><li>What questions were you asked?</li><li>What went well?</li><li>What would you do differently?</li><li>What was your impression of the company/team?</li><li>Any red flags or concerns?</li><li>Was salary discussed? If so, what range?</li><li>What next steps did they mention?</li></ul></div><hr><p style='font-size:12px;color:#888;'>Selvi Job App &mdash; Module 6: Interview Scheduling</p>\"\n}",
+        "options": {}
+      },
+      "id": "send-debrief-reminder",
+      "name": "Send Debrief Reminder",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO interview_communications (tenant_id, interview_id, communication_type, subject, body, recipient_email) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Need Debrief?').first().json.interview_id }}', 'debrief_reminder', 'Debrief: {{ $('Need Debrief?').first().json.company_name }} - {{ $('Need Debrief?').first().json.role_title }}', 'Debrief reminder sent', '{{ $('Loop Over Tenants').item.json.notification_email }}');",
+        "options": {}
+      },
+      "id": "log-debrief-sent",
+      "name": "Log Debrief Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interviewer_names, i.interviewer_titles, i.completed_at, i.what_to_prepare FROM interviews i WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND i.status = 'completed' AND i.completed_at < NOW() - INTERVAL '90 minutes' AND i.completed_at > NOW() - INTERVAL '24 hours' AND i.interview_format NOT IN ('phone_screen', 'assessment_centre', 'academic_selection_day') AND NOT EXISTS (SELECT 1 FROM interview_communications ic WHERE ic.interview_id = i.id AND ic.communication_type = 'thank_you_draft') LIMIT 5;",
+        "options": {}
+      },
+      "id": "find-need-thankyou",
+      "name": "Find Needing Thank-You",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        600
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-thankyou",
+              "leftValue": "={{ $json.interview_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "has-thankyou-needed",
+      "name": "Need Thank-You?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const interview = $input.first().json;\n\nconst interviewerList = interview.interviewer_names && interview.interviewer_names.length > 0\n  ? interview.interviewer_names.join(', ')\n  : 'the interviewer(s)';\n\nconst prompt = `Write a professional thank-you email for a job interview.\n\nContext:\n- Company: ${interview.company_name}\n- Role: ${interview.role_title}\n- Interview type: ${(interview.interview_format || '').replace(/_/g, ' ')}\n- Track: ${interview.interview_track}\n- Stage: ${(interview.interview_stage || 'not specified').replace(/_/g, ' ')}\n- Interviewer(s): ${interviewerList}\n- The candidate is a PhD + MBA professional with 18 years of HR/L&D experience\n\nRequirements:\n- Professional UK English tone\n- Brief (150-200 words)\n- Reference something specific about the role or company (use a [ADD YOUR OWN OBSERVATION HERE] placeholder for a personal touch the candidate should add)\n- Express continued interest\n- Mention a specific strength relevant to the role\n- Do NOT be overly effusive or sycophantic\n- Include a [ADD YOUR OWN OBSERVATION HERE] placeholder where the candidate should insert a specific moment or topic from the interview\n- End with a forward-looking statement\n\nGenerate ONLY the email body (no subject line, no greeting format instructions). Start with \"Dear [interviewer name],\"`;\n\nreturn {\n  interview_id: interview.interview_id,\n  company_name: interview.company_name,\n  role_title: interview.role_title,\n  interview_track: interview.interview_track,\n  interviewer_names: interview.interviewer_names,\n  prompt: prompt\n};"
+      },
+      "id": "build-thankyou-prompt",
+      "name": "Build Thank-You Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $credentials.anthropicApi.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 1000,\n  \"temperature\": 0.7,\n  \"system\": \"You are an expert career coach specialising in UK professional etiquette. Write concise, genuine thank-you emails that avoid AI-sounding language.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 60000
+        }
+      },
+      "id": "claude-thankyou",
+      "name": "Claude Haiku: Thank-You",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        600
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "niaedqDRwvoilXyi",
+          "name": "Anthropic API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Build Thank-You Prompt').first().json;\nconst response = $('Claude Haiku: Thank-You').first().json;\n\nif (response.error || !response.content || !response.content[0]) {\n  return {\n    interview_id: input.interview_id,\n    company_name: input.company_name,\n    role_title: input.role_title,\n    success: false,\n    error: response.error?.message || 'No content from Claude'\n  };\n}\n\nconst thankYouBody = response.content[0].text;\n\nreturn {\n  interview_id: input.interview_id,\n  company_name: input.company_name,\n  role_title: input.role_title,\n  thank_you_body: thankYouBody,\n  model_used: 'claude-3-5-haiku-20241022',\n  prompt_tokens: response.usage?.input_tokens || 0,\n  completion_tokens: response.usage?.output_tokens || 0,\n  success: true\n};"
+      },
+      "id": "parse-thankyou",
+      "name": "Parse Thank-You",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "thankyou-ok",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "thankyou-ok",
+      "name": "Thank-You OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1720,
+        600
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO interview_communications (tenant_id, interview_id, communication_type, subject, body, recipient_email, model_used, prompt_tokens, completion_tokens) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.interview_id }}', 'thank_you_draft', 'Thank You - {{ $json.company_name }} {{ $json.role_title }} Interview', '{{ $json.thank_you_body.replace(/'/g, \"''\") }}', '{{ $('Loop Over Tenants').item.json.notification_email }}', '{{ $json.model_used }}', {{ $json.prompt_tokens }}, {{ $json.completion_tokens }});",
+        "options": {}
+      },
+      "id": "save-thankyou",
+      "name": "Save Thank-You Draft",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1940,
+        500
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"Thank-You Draft: {{ $('Parse Thank-You').first().json.company_name }} - {{ $('Parse Thank-You').first().json.role_title }}\",\n  \"html\": \"<h2>Thank-You Email Draft</h2><h3>{{ $('Parse Thank-You').first().json.company_name }} &mdash; {{ $('Parse Thank-You').first().json.role_title }}</h3><div style='background:#fff3cd;padding:12px;border-radius:8px;margin:12px 0;border:1px solid #ffc107;'><strong>This is an AI-generated draft. Personalise it before sending.</strong> Look for [ADD YOUR OWN OBSERVATION HERE] placeholders and replace them with specific details from your interview.</div><div style='background:#f8f9fa;padding:16px;border-radius:8px;margin:16px 0;white-space:pre-wrap;font-family:Georgia,serif;'>\" + {{ JSON.stringify($('Parse Thank-You').first().json.thank_you_body.replace(/\\n/g, '<br>')) }} + \"</div><hr><p style='font-size:12px;color:#888;'>Selvi Job App &mdash; Module 6: Post-Interview Workflow</p>\"\n}",
+        "options": {}
+      },
+      "id": "email-thankyou-draft",
+      "name": "Email Thank-You Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        500
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every Hour": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Recently Completed": {
+      "main": [
+        [
+          {
+            "node": "Any Completed?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Completed?": {
+      "main": [
+        [
+          {
+            "node": "Mark as Completed",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Mark as Completed": {
+      "main": [
+        [
+          {
+            "node": "Update App Status (M4)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Needing Debrief": {
+      "main": [
+        [
+          {
+            "node": "Need Debrief?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Debrief?": {
+      "main": [
+        [
+          {
+            "node": "Send Debrief Reminder",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Send Debrief Reminder": {
+      "main": [
+        [
+          {
+            "node": "Log Debrief Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Needing Thank-You": {
+      "main": [
+        [
+          {
+            "node": "Need Thank-You?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Need Thank-You?": {
+      "main": [
+        [
+          {
+            "node": "Build Thank-You Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Thank-You Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Haiku: Thank-You",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku: Thank-You": {
+      "main": [
+        [
+          {
+            "node": "Parse Thank-You",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Thank-You": {
+      "main": [
+        [
+          {
+            "node": "Thank-You OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Thank-You OK?": {
+      "main": [
+        [
+          {
+            "node": "Save Thank-You Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Save Thank-You Draft": {
+      "main": [
+        [
+          {
+            "node": "Email Thank-You Draft",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Find Recently Completed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update App Status (M4)": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Debrief Sent": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Thank-You Draft": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every Hour": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+  "activeVersionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:13:55.428Z",
+      "createdAt": "2026-04-02T17:13:55.428Z",
+      "role": "workflow:owner",
+      "workflowId": "u16sM5nWU7lggkqh",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:13:55.438Z",
+    "createdAt": "2026-04-02T17:13:55.438Z",
+    "versionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+    "workflowId": "u16sM5nWU7lggkqh",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 1
+              }
+            ]
+          }
+        },
+        "id": "hourly-trigger",
+        "name": "Every Hour",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.application_id FROM interviews i WHERE i.interview_date = CURRENT_DATE AND (i.interview_date || ' ' || COALESCE(i.interview_end_time::text, '23:59:59'))::timestamp < NOW() AND i.status IN ('calendared', 'prep_ready', 'confirmed') LIMIT 10;",
+          "options": {}
+        },
+        "id": "find-completed",
+        "name": "Find Recently Completed",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-completed",
+                "leftValue": "={{ $json.interview_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-completed",
+        "name": "Any Completed?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE interviews SET status = 'completed', completed_at = NOW(), updated_at = NOW() WHERE id = '{{ $json.interview_id }}' AND status IN ('calendared', 'prep_ready', 'confirmed') RETURNING id, company_name, role_title;",
+          "options": {}
+        },
+        "id": "mark-completed",
+        "name": "Mark as Completed",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          660,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE applications SET status = 'interviewed', updated_at = NOW() WHERE id = '{{ $json.application_id }}' AND '{{ $json.application_id }}' != '' AND '{{ $json.application_id }}' IS NOT NULL;",
+          "options": {}
+        },
+        "id": "update-app-status",
+        "name": "Update App Status (M4)",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          880,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interviewer_names, i.interviewer_titles, i.completed_at FROM interviews i WHERE i.status = 'completed' AND i.completed_at < NOW() - INTERVAL '60 minutes' AND i.completed_at > NOW() - INTERVAL '24 hours' AND NOT EXISTS (SELECT 1 FROM interview_communications ic WHERE ic.interview_id = i.id AND ic.communication_type = 'debrief_reminder') LIMIT 10;",
+          "options": {}
+        },
+        "id": "find-need-debrief",
+        "name": "Find Needing Debrief",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-debrief",
+                "leftValue": "={{ $json.interview_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-debrief-needed",
+        "name": "Need Debrief?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": \"Debrief: {{ $json.company_name }} - {{ $json.role_title }} (today)\",\n  \"html\": \"<h2>Post-Interview Debrief</h2><h3>{{ $json.company_name }} &mdash; {{ $json.role_title }}</h3><p>How did the {{ ($json.interview_format || '').replace(/_/g, ' ') }} interview go?</p><div style='background:#f0f8ff;padding:16px;border-radius:8px;margin:16px 0;'><h4>Quick Debrief</h4><p>Reply with a rating (1-5) and one sentence:</p><ul><li><strong>1</strong> = Went poorly, major concerns</li><li><strong>2</strong> = Below expectations</li><li><strong>3</strong> = Average, neither good nor bad</li><li><strong>4</strong> = Went well, positive signals</li><li><strong>5</strong> = Excellent, very confident</li></ul><p><em>Example: '4 - Good rapport with panel, strong STAR examples on stakeholder management, asked about digital learning strategy'</em></p></div><div style='background:#fff8e7;padding:16px;border-radius:8px;margin:16px 0;'><h4>Full Debrief (optional)</h4><ul><li>What questions were you asked?</li><li>What went well?</li><li>What would you do differently?</li><li>What was your impression of the company/team?</li><li>Any red flags or concerns?</li><li>Was salary discussed? If so, what range?</li><li>What next steps did they mention?</li></ul></div><hr><p style='font-size:12px;color:#888;'>Selvi Job App &mdash; Module 6: Interview Scheduling</p>\"\n}",
+          "options": {}
+        },
+        "id": "send-debrief-reminder",
+        "name": "Send Debrief Reminder",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          660,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO interview_communications (interview_id, communication_type, subject, body, recipient_email) VALUES ('{{ $('Need Debrief?').first().json.interview_id }}', 'debrief_reminder', 'Debrief: {{ $('Need Debrief?').first().json.company_name }} - {{ $('Need Debrief?').first().json.role_title }}', 'Debrief reminder sent', 'chellamma.uk@gmail.com');",
+          "options": {}
+        },
+        "id": "log-debrief-sent",
+        "name": "Log Debrief Sent",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          880,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interviewer_names, i.interviewer_titles, i.completed_at, i.what_to_prepare FROM interviews i WHERE i.status = 'completed' AND i.completed_at < NOW() - INTERVAL '90 minutes' AND i.completed_at > NOW() - INTERVAL '24 hours' AND i.interview_format NOT IN ('phone_screen', 'assessment_centre', 'academic_selection_day') AND NOT EXISTS (SELECT 1 FROM interview_communications ic WHERE ic.interview_id = i.id AND ic.communication_type = 'thank_you_draft') LIMIT 5;",
+          "options": {}
+        },
+        "id": "find-need-thankyou",
+        "name": "Find Needing Thank-You",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          600
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-thankyou",
+                "leftValue": "={{ $json.interview_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "has-thankyou-needed",
+        "name": "Need Thank-You?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          440,
+          600
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const interview = $input.first().json;\n\nconst interviewerList = interview.interviewer_names && interview.interviewer_names.length > 0\n  ? interview.interviewer_names.join(', ')\n  : 'the interviewer(s)';\n\nconst prompt = `Write a professional thank-you email for a job interview.\n\nContext:\n- Company: ${interview.company_name}\n- Role: ${interview.role_title}\n- Interview type: ${(interview.interview_format || '').replace(/_/g, ' ')}\n- Track: ${interview.interview_track}\n- Stage: ${(interview.interview_stage || 'not specified').replace(/_/g, ' ')}\n- Interviewer(s): ${interviewerList}\n- The candidate is a PhD + MBA professional with 18 years of HR/L&D experience\n\nRequirements:\n- Professional UK English tone\n- Brief (150-200 words)\n- Reference something specific about the role or company (use a [ADD YOUR OWN OBSERVATION HERE] placeholder for a personal touch the candidate should add)\n- Express continued interest\n- Mention a specific strength relevant to the role\n- Do NOT be overly effusive or sycophantic\n- Include a [ADD YOUR OWN OBSERVATION HERE] placeholder where the candidate should insert a specific moment or topic from the interview\n- End with a forward-looking statement\n\nGenerate ONLY the email body (no subject line, no greeting format instructions). Start with \"Dear [interviewer name],\"`;\n\nreturn {\n  interview_id: interview.interview_id,\n  company_name: interview.company_name,\n  role_title: interview.role_title,\n  interview_track: interview.interview_track,\n  interviewer_names: interview.interviewer_names,\n  prompt: prompt\n};"
+        },
+        "id": "build-thankyou-prompt",
+        "name": "Build Thank-You Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          600
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $credentials.anthropicApi.apiKey }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 1000,\n  \"temperature\": 0.7,\n  \"system\": \"You are an expert career coach specialising in UK professional etiquette. Write concise, genuine thank-you emails that avoid AI-sounding language.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+          "options": {
+            "timeout": 60000
+          }
+        },
+        "id": "claude-thankyou",
+        "name": "Claude Haiku: Thank-You",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          600
+        ],
+        "credentials": {
+          "httpCustomAuth": {
+            "id": "niaedqDRwvoilXyi",
+            "name": "Anthropic API"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $('Build Thank-You Prompt').first().json;\nconst response = $('Claude Haiku: Thank-You').first().json;\n\nif (response.error || !response.content || !response.content[0]) {\n  return {\n    interview_id: input.interview_id,\n    company_name: input.company_name,\n    role_title: input.role_title,\n    success: false,\n    error: response.error?.message || 'No content from Claude'\n  };\n}\n\nconst thankYouBody = response.content[0].text;\n\nreturn {\n  interview_id: input.interview_id,\n  company_name: input.company_name,\n  role_title: input.role_title,\n  thank_you_body: thankYouBody,\n  model_used: 'claude-3-5-haiku-20241022',\n  prompt_tokens: response.usage?.input_tokens || 0,\n  completion_tokens: response.usage?.output_tokens || 0,\n  success: true\n};"
+        },
+        "id": "parse-thankyou",
+        "name": "Parse Thank-You",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          600
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "thankyou-ok",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "thankyou-ok",
+        "name": "Thank-You OK?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1320,
+          600
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO interview_communications (interview_id, communication_type, subject, body, recipient_email, model_used, prompt_tokens, completion_tokens) VALUES ('{{ $json.interview_id }}', 'thank_you_draft', 'Thank You - {{ $json.company_name }} {{ $json.role_title }} Interview', '{{ $json.thank_you_body.replace(/'/g, \"''\") }}', 'chellamma.uk@gmail.com', '{{ $json.model_used }}', {{ $json.prompt_tokens }}, {{ $json.completion_tokens }});",
+          "options": {}
+        },
+        "id": "save-thankyou",
+        "name": "Save Thank-You Draft",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1540,
+          500
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": \"Thank-You Draft: {{ $('Parse Thank-You').first().json.company_name }} - {{ $('Parse Thank-You').first().json.role_title }}\",\n  \"html\": \"<h2>Thank-You Email Draft</h2><h3>{{ $('Parse Thank-You').first().json.company_name }} &mdash; {{ $('Parse Thank-You').first().json.role_title }}</h3><div style='background:#fff3cd;padding:12px;border-radius:8px;margin:12px 0;border:1px solid #ffc107;'><strong>This is an AI-generated draft. Personalise it before sending.</strong> Look for [ADD YOUR OWN OBSERVATION HERE] placeholders and replace them with specific details from your interview.</div><div style='background:#f8f9fa;padding:16px;border-radius:8px;margin:16px 0;white-space:pre-wrap;font-family:Georgia,serif;'>\" + {{ JSON.stringify($('Parse Thank-You').first().json.thank_you_body.replace(/\\n/g, '<br>')) }} + \"</div><hr><p style='font-size:12px;color:#888;'>Selvi Job App &mdash; Module 6: Post-Interview Workflow</p>\"\n}",
+          "options": {}
+        },
+        "id": "email-thankyou-draft",
+        "name": "Email Thank-You Draft",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1760,
+          500
+        ]
+      }
+    ],
+    "connections": {
+      "Every Hour": {
+        "main": [
+          [
+            {
+              "node": "Find Recently Completed",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Find Needing Debrief",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Find Needing Thank-You",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Recently Completed": {
+        "main": [
+          [
+            {
+              "node": "Any Completed?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Any Completed?": {
+        "main": [
+          [
+            {
+              "node": "Mark as Completed",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Mark as Completed": {
+        "main": [
+          [
+            {
+              "node": "Update App Status (M4)",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Needing Debrief": {
+        "main": [
+          [
+            {
+              "node": "Need Debrief?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Need Debrief?": {
+        "main": [
+          [
+            {
+              "node": "Send Debrief Reminder",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Send Debrief Reminder": {
+        "main": [
+          [
+            {
+              "node": "Log Debrief Sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Needing Thank-You": {
+        "main": [
+          [
+            {
+              "node": "Need Thank-You?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Need Thank-You?": {
+        "main": [
+          [
+            {
+              "node": "Build Thank-You Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Build Thank-You Prompt": {
+        "main": [
+          [
+            {
+              "node": "Claude Haiku: Thank-You",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Haiku: Thank-You": {
+        "main": [
+          [
+            {
+              "node": "Parse Thank-You",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Thank-You": {
+        "main": [
+          [
+            {
+              "node": "Thank-You OK?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Thank-You OK?": {
+        "main": [
+          [
+            {
+              "node": "Save Thank-You Draft",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Save Thank-You Draft": {
+        "main": [
+          [
+            {
+              "node": "Email Thank-You Draft",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:14:31.618Z",
+        "id": 28,
+        "workflowId": "u16sM5nWU7lggkqh",
+        "versionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:26.371Z",
+        "id": 92,
+        "workflowId": "u16sM5nWU7lggkqh",
+        "versionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:26.395Z",
+        "id": 93,
+        "workflowId": "u16sM5nWU7lggkqh",
+        "versionId": "52427794-42bc-46d8-a4c5-0e78c42cda7e",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

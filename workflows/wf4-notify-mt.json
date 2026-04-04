@@ -1,0 +1,671 @@
+{
+  "updatedAt": "2026-04-02T18:01:43.716Z",
+  "createdAt": "2026-04-02T17:21:05.485Z",
+  "id": "QYAJabWbPCEoCP5M",
+  "name": "WF4-NOTIFY: Notification Engine",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 5
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Every 5 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM notification_queue\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND sent = false\n  AND retry_count < 3\n  AND (\n    priority = 'critical'\n    OR (priority = 'high' AND EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/London') BETWEEN 7 AND 22)\n    OR (priority IN ('medium', 'low') AND EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/London') BETWEEN 7 AND 9)\n  )\nORDER BY\n    CASE priority\n        WHEN 'critical' THEN 1\n        WHEN 'high' THEN 2\n        WHEN 'medium' THEN 3\n        WHEN 'low' THEN 4\n    END,\n    created_at ASC\nLIMIT 10;",
+        "options": {}
+      },
+      "id": "pg_fetch",
+      "name": "Fetch Pending Notifications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        650,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst now = new Date();\nconst results = [];\n\n// Throttle: max 5 emails per hour, max 20 per day\n// We'll check counts later, for now pass through items with rate limit info\nfor (const item of items) {\n    const n = item.json;\n    if (!n.id) continue;\n\n    // Build email body\n    let html = n.body_html || '';\n    if (!html) {\n        html = `<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n            <h2 style=\"color: #2563eb;\">${n.subject || 'Notification'}</h2>\n            <p>${n.body_text || 'No details available.'}</p>\n            <hr style=\"border: 1px solid #e5e7eb;\">\n            <p style=\"color: #6b7280; font-size: 12px;\">Selvi Job Tracker | Application Pipeline Manager</p>\n        </div>`;\n    } else {\n        // Wrap in styled container\n        html = `<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n            ${html}\n            <hr style=\"border: 1px solid #e5e7eb; margin-top: 20px;\">\n            <p style=\"color: #6b7280; font-size: 12px;\">Selvi Job Tracker | Application Pipeline Manager</p>\n        </div>`;\n    }\n\n    results.push({ json: {\n        tenant_id: tenantId,\n        ...n,\n        email_html: html,\n        email_subject: n.subject || `[Selvi Tracker] ${n.notification_type}`\n    }});\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "id": "code_throttle",
+      "name": "Apply Throttling & Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if_has_notif",
+      "name": "Has Notifications?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1150,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job Tracker <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": {{ JSON.stringify($json.email_subject) }},\n  \"html\": {{ JSON.stringify($json.email_html) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "http_resend",
+      "name": "Send via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1400,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notification_queue SET sent = true, sent_at = NOW() WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $('Apply Throttling & Format').item.json.id }}';",
+        "options": {}
+      },
+      "id": "pg_mark_sent",
+      "name": "Mark Notification Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1650,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log (tenant_id, notification_type, recipient, jobs_included, status) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Apply Throttling & Format').item.json.notification_type }}',\n    '{{ $('Loop Over Tenants').item.json.notification_email }}',\n    1,\n    'sent'\n);",
+        "options": {}
+      },
+      "id": "pg_log_sent",
+      "name": "Log Sent Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1900,
+        -200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE notification_queue SET\n    retry_count = retry_count + 1,\n    last_error = 'Send failed at {{ new Date().toISOString() }}'\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $('Apply Throttling & Format').item.json.id }}';",
+        "options": {}
+      },
+      "id": "pg_retry",
+      "name": "Increment Retry Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1650,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 5 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Pending Notifications": {
+      "main": [
+        [
+          {
+            "node": "Apply Throttling & Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Apply Throttling & Format": {
+      "main": [
+        [
+          {
+            "node": "Has Notifications?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notifications?": {
+      "main": [
+        [
+          {
+            "node": "Send via Resend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Send via Resend": {
+      "main": [
+        [
+          {
+            "node": "Mark Notification Sent",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Notification Sent": {
+      "main": [
+        [
+          {
+            "node": "Log Sent Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Increment Retry Count": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fetch Pending Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Sent Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true,
+    "binaryMode": "separate",
+    "timeSavedMode": "fixed"
+  },
+  "staticData": {
+    "node:Every 5 Minutes": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+  "activeVersionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+  "versionCounter": 9,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:21:05.485Z",
+      "createdAt": "2026-04-02T17:21:05.485Z",
+      "role": "workflow:owner",
+      "workflowId": "QYAJabWbPCEoCP5M",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:24:10.921Z",
+    "createdAt": "2026-04-02T17:24:10.921Z",
+    "versionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+    "workflowId": "QYAJabWbPCEoCP5M",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 5
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Every 5 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT * FROM notification_queue\nWHERE sent = false\n  AND retry_count < 3\n  AND (\n    priority = 'critical'\n    OR (priority = 'high' AND EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/London') BETWEEN 7 AND 22)\n    OR (priority IN ('medium', 'low') AND EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/London') BETWEEN 7 AND 9)\n  )\nORDER BY\n    CASE priority\n        WHEN 'critical' THEN 1\n        WHEN 'high' THEN 2\n        WHEN 'medium' THEN 3\n        WHEN 'low' THEN 4\n    END,\n    created_at ASC\nLIMIT 10;",
+          "options": {}
+        },
+        "id": "pg_fetch",
+        "name": "Fetch Pending Notifications",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst now = new Date();\nconst results = [];\n\n// Throttle: max 5 emails per hour, max 20 per day\n// We'll check counts later, for now pass through items with rate limit info\nfor (const item of items) {\n    const n = item.json;\n    if (!n.id) continue;\n\n    // Build email body\n    let html = n.body_html || '';\n    if (!html) {\n        html = `<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n            <h2 style=\"color: #2563eb;\">${n.subject || 'Notification'}</h2>\n            <p>${n.body_text || 'No details available.'}</p>\n            <hr style=\"border: 1px solid #e5e7eb;\">\n            <p style=\"color: #6b7280; font-size: 12px;\">Selvi Job Tracker | Application Pipeline Manager</p>\n        </div>`;\n    } else {\n        // Wrap in styled container\n        html = `<div style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n            ${html}\n            <hr style=\"border: 1px solid #e5e7eb; margin-top: 20px;\">\n            <p style=\"color: #6b7280; font-size: 12px;\">Selvi Job Tracker | Application Pipeline Manager</p>\n        </div>`;\n    }\n\n    results.push({ json: {\n        ...n,\n        email_html: html,\n        email_subject: n.subject || `[Selvi Tracker] ${n.notification_type}`\n    }});\n}\n\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+        },
+        "id": "code_throttle",
+        "name": "Apply Throttling & Format",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "notTrue"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "if_has_notif",
+        "name": "Has Notifications?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job Tracker <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": {{ JSON.stringify($json.email_subject) }},\n  \"html\": {{ JSON.stringify($json.email_html) }}\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "http_resend",
+        "name": "Send via Resend",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1000,
+          -100
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE notification_queue SET sent = true, sent_at = NOW() WHERE id = '{{ $('Apply Throttling & Format').item.json.id }}';",
+          "options": {}
+        },
+        "id": "pg_mark_sent",
+        "name": "Mark Notification Sent",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1250,
+          -200
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_log (notification_type, recipient, jobs_included, status)\nVALUES (\n    '{{ $('Apply Throttling & Format').item.json.notification_type }}',\n    'chellamma.uk@gmail.com',\n    1,\n    'sent'\n);",
+          "options": {}
+        },
+        "id": "pg_log_sent",
+        "name": "Log Sent Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1500,
+          -200
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE notification_queue SET\n    retry_count = retry_count + 1,\n    last_error = 'Send failed at {{ new Date().toISOString() }}'\nWHERE id = '{{ $('Apply Throttling & Format').item.json.id }}';",
+          "options": {}
+        },
+        "id": "pg_retry",
+        "name": "Increment Retry Count",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1250,
+          100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 5 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Fetch Pending Notifications",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Pending Notifications": {
+        "main": [
+          [
+            {
+              "node": "Apply Throttling & Format",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Apply Throttling & Format": {
+        "main": [
+          [
+            {
+              "node": "Has Notifications?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Notifications?": {
+        "main": [
+          [
+            {
+              "node": "Send via Resend",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Send via Resend": {
+        "main": [
+          [
+            {
+              "node": "Mark Notification Sent",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark Notification Sent": {
+        "main": [
+          [
+            {
+              "node": "Log Sent Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Increment Retry Count": {
+        "main": [
+          []
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:24:32.643Z",
+        "id": 57,
+        "workflowId": "QYAJabWbPCEoCP5M",
+        "versionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-02T18:01:43.767Z",
+        "id": 59,
+        "workflowId": "QYAJabWbPCEoCP5M",
+        "versionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-02T18:01:43.791Z",
+        "id": 60,
+        "workflowId": "QYAJabWbPCEoCP5M",
+        "versionId": "6b25d379-9667-44a1-9efc-02d665b04365",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

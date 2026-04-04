@@ -1,0 +1,486 @@
+{
+  "updatedAt": "2026-04-04T14:22:30.528Z",
+  "createdAt": "2026-04-02T17:12:40.946Z",
+  "id": "VGi4OAdRy3rOP2e9",
+  "name": "WF6-DAILY: Daily Interview Briefing",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "30 7 * * *"
+            }
+          ]
+        }
+      },
+      "id": "cron-730am",
+      "name": "Daily 7:30 AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.interview_duration_minutes, i.location_type, i.physical_address, i.video_platform, i.video_link, i.interviewer_names, i.interviewer_titles, i.what_to_prepare, i.dress_code, i.status, pb.full_brief_text IS NOT NULL AS has_prep_brief, pb.overall_quality_score AS prep_quality, tp.recommended_mode AS travel_mode, tp.recommended_departure_time AS departure_time, tp.estimated_duration_minutes AS travel_minutes, tp.estimated_cost_gbp AS travel_cost FROM interviews i LEFT JOIN prep_briefs pb ON pb.interview_id = i.id LEFT JOIN travel_plans tp ON tp.interview_id = i.id WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND i.interview_date IN (CURRENT_DATE, CURRENT_DATE + 1) AND i.status NOT IN ('cancelled_by_employer', 'cancelled_by_candidate', 'no_show') ORDER BY i.interview_date, i.interview_start_time;",
+        "options": {}
+      },
+      "id": "get-interviews",
+      "name": "Get Today & Tomorrow Interviews",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-interviews",
+              "leftValue": "={{ $json.interview_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-any",
+      "name": "Any Interviews?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst today = new Date().toISOString().split('T')[0];\nconst tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];\n\nconst todayInterviews = items.filter(i => i.json.interview_date === today || String(i.json.interview_date).startsWith(today));\nconst tomorrowInterviews = items.filter(i => i.json.interview_date === tomorrow || String(i.json.interview_date).startsWith(tomorrow));\n\nfunction formatInterview(iv) {\n  const j = iv.json;\n  let html = `<div style=\"border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0;background:#fafafa;\">`;\n  html += `<h3 style=\"margin:0 0 8px 0;color:#1a5276;\">${j.company_name} &mdash; ${j.role_title}</h3>`;\n  html += `<table style=\"width:100%;font-size:14px;\">`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;width:140px;\">Time</td><td>${j.interview_start_time || 'TBC'} - ${j.interview_end_time || 'TBC'} (${j.interview_duration_minutes || 60} min)</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Format</td><td>${(j.interview_format || '').replace(/_/g, ' ')} | ${j.interview_track}</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Stage</td><td>${(j.interview_stage || 'Not specified').replace(/_/g, ' ')}</td></tr>`;\n  \n  if (j.location_type === 'remote' || j.video_platform) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Platform</td><td>${j.video_platform || 'Video'} ${j.video_link ? '&mdash; <a href=\"' + j.video_link + '\">Join Link</a>' : ''}</td></tr>`;\n  }\n  if (j.physical_address) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Location</td><td>${j.physical_address}</td></tr>`;\n  }\n  if (j.interviewer_names && j.interviewer_names.length > 0) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Interviewers</td><td>${j.interviewer_names.join(', ')}</td></tr>`;\n  }\n  if (j.travel_mode) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Travel</td><td>${j.travel_mode} &mdash; depart ${j.departure_time || 'TBC'} (${j.travel_minutes} min, ~GBP ${j.travel_cost || 'N/A'})</td></tr>`;\n  }\n  if (j.what_to_prepare) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Prepare</td><td>${j.what_to_prepare}</td></tr>`;\n  }\n  if (j.dress_code) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Dress Code</td><td>${j.dress_code}</td></tr>`;\n  }\n  \n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Prep Brief</td><td>${j.has_prep_brief ? '&#9989; Ready' : '&#9888;&#65039; Not yet generated'}</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Status</td><td>${j.status}</td></tr>`;\n  html += `</table></div>`;\n  return html;\n}\n\nlet emailHtml = `<div style=\"font-family:Arial,sans-serif;max-width:650px;\">`;\n\n// Today section\nif (todayInterviews.length > 0) {\n  emailHtml += `<h2 style=\"color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:8px;\">Today's Interviews (${todayInterviews.length})</h2>`;\n  todayInterviews.forEach(iv => { emailHtml += formatInterview(iv); });\n} else {\n  emailHtml += `<h2 style=\"color:#1a5276;\">No interviews today</h2>`;\n}\n\n// Tomorrow section\nif (tomorrowInterviews.length > 0) {\n  emailHtml += `<h2 style=\"color:#2e86c1;border-bottom:2px solid #2e86c1;padding-bottom:8px;margin-top:24px;\">Tomorrow's Interviews (${tomorrowInterviews.length})</h2>`;\n  tomorrowInterviews.forEach(iv => { emailHtml += formatInterview(iv); });\n}\n\n// Quick reminders\nemailHtml += `<div style=\"margin-top:24px;padding:16px;background:#eaf2f8;border-radius:8px;\">`;\nemailHtml += `<h3 style=\"margin:0 0 8px 0;\">Quick Reminders</h3>`;\nemailHtml += `<ul style=\"margin:0;padding-left:20px;\">`;\nemailHtml += `<li>Test video/audio 15 minutes before remote interviews</li>`;\nemailHtml += `<li>Have a glass of water and your notes ready</li>`;\nemailHtml += `<li>Review your prep brief one final time</li>`;\nemailHtml += `<li>Prepare 2-3 questions to ask at the end</li>`;\nemailHtml += `</ul></div>`;\n\nemailHtml += `<hr style=\"margin-top:24px;\"><p style=\"font-size:12px;color:#888;\">Selvi Job App &mdash; Module 6: Interview Scheduling &amp; Preparation</p></div>`;\n\nconst totalToday = todayInterviews.length;\nconst totalTomorrow = tomorrowInterviews.length;\nlet subject = '';\nif (totalToday > 0 && totalTomorrow > 0) {\n  subject = `Today: ${totalToday} interview${totalToday > 1 ? 's' : ''} | Tomorrow: ${totalTomorrow} interview${totalTomorrow > 1 ? 's' : ''}`;\n} else if (totalToday > 0) {\n  subject = `Today's Interviews: ${totalToday} scheduled`;\n} else {\n  subject = `Tomorrow's Interviews: ${totalTomorrow} scheduled`;\n}\n\nreturn {\n  subject: subject,\n  emailHtml: emailHtml,\n  totalToday: totalToday,\n  totalTomorrow: totalTomorrow\n};"
+      },
+      "id": "build-email",
+      "name": "Build Briefing Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": {{ JSON.stringify($json.subject) }},\n  \"html\": {{ JSON.stringify($json.emailHtml) }}\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "send-briefing",
+      "name": "Send Daily Briefing",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Daily 7:30 AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Today & Tomorrow Interviews": {
+      "main": [
+        [
+          {
+            "node": "Any Interviews?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Any Interviews?": {
+      "main": [
+        [
+          {
+            "node": "Build Briefing Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Build Briefing Email": {
+      "main": [
+        [
+          {
+            "node": "Send Daily Briefing",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get Today & Tomorrow Interviews",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Daily Briefing": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Daily 7:30 AM": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+  "activeVersionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:12:40.946Z",
+      "createdAt": "2026-04-02T17:12:40.946Z",
+      "role": "workflow:owner",
+      "workflowId": "VGi4OAdRy3rOP2e9",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:12:40.953Z",
+    "createdAt": "2026-04-02T17:12:40.953Z",
+    "versionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+    "workflowId": "VGi4OAdRy3rOP2e9",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "30 7 * * *"
+              }
+            ]
+          }
+        },
+        "id": "cron-730am",
+        "name": "Daily 7:30 AM",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.interview_duration_minutes, i.location_type, i.physical_address, i.video_platform, i.video_link, i.interviewer_names, i.interviewer_titles, i.what_to_prepare, i.dress_code, i.status, pb.full_brief_text IS NOT NULL AS has_prep_brief, pb.overall_quality_score AS prep_quality, tp.recommended_mode AS travel_mode, tp.recommended_departure_time AS departure_time, tp.estimated_duration_minutes AS travel_minutes, tp.estimated_cost_gbp AS travel_cost FROM interviews i LEFT JOIN prep_briefs pb ON pb.interview_id = i.id LEFT JOIN travel_plans tp ON tp.interview_id = i.id WHERE i.interview_date IN (CURRENT_DATE, CURRENT_DATE + 1) AND i.status NOT IN ('cancelled_by_employer', 'cancelled_by_candidate', 'no_show') ORDER BY i.interview_date, i.interview_start_time;",
+          "options": {}
+        },
+        "id": "get-interviews",
+        "name": "Get Today & Tomorrow Interviews",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-interviews",
+                "leftValue": "={{ $json.interview_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-any",
+        "name": "Any Interviews?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst today = new Date().toISOString().split('T')[0];\nconst tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];\n\nconst todayInterviews = items.filter(i => i.json.interview_date === today || String(i.json.interview_date).startsWith(today));\nconst tomorrowInterviews = items.filter(i => i.json.interview_date === tomorrow || String(i.json.interview_date).startsWith(tomorrow));\n\nfunction formatInterview(iv) {\n  const j = iv.json;\n  let html = `<div style=\"border:1px solid #ddd;border-radius:8px;padding:16px;margin:12px 0;background:#fafafa;\">`;\n  html += `<h3 style=\"margin:0 0 8px 0;color:#1a5276;\">${j.company_name} &mdash; ${j.role_title}</h3>`;\n  html += `<table style=\"width:100%;font-size:14px;\">`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;width:140px;\">Time</td><td>${j.interview_start_time || 'TBC'} - ${j.interview_end_time || 'TBC'} (${j.interview_duration_minutes || 60} min)</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Format</td><td>${(j.interview_format || '').replace(/_/g, ' ')} | ${j.interview_track}</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Stage</td><td>${(j.interview_stage || 'Not specified').replace(/_/g, ' ')}</td></tr>`;\n  \n  if (j.location_type === 'remote' || j.video_platform) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Platform</td><td>${j.video_platform || 'Video'} ${j.video_link ? '&mdash; <a href=\"' + j.video_link + '\">Join Link</a>' : ''}</td></tr>`;\n  }\n  if (j.physical_address) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Location</td><td>${j.physical_address}</td></tr>`;\n  }\n  if (j.interviewer_names && j.interviewer_names.length > 0) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Interviewers</td><td>${j.interviewer_names.join(', ')}</td></tr>`;\n  }\n  if (j.travel_mode) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Travel</td><td>${j.travel_mode} &mdash; depart ${j.departure_time || 'TBC'} (${j.travel_minutes} min, ~GBP ${j.travel_cost || 'N/A'})</td></tr>`;\n  }\n  if (j.what_to_prepare) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Prepare</td><td>${j.what_to_prepare}</td></tr>`;\n  }\n  if (j.dress_code) {\n    html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Dress Code</td><td>${j.dress_code}</td></tr>`;\n  }\n  \n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Prep Brief</td><td>${j.has_prep_brief ? '&#9989; Ready' : '&#9888;&#65039; Not yet generated'}</td></tr>`;\n  html += `<tr><td style=\"padding:4px 8px;font-weight:bold;\">Status</td><td>${j.status}</td></tr>`;\n  html += `</table></div>`;\n  return html;\n}\n\nlet emailHtml = `<div style=\"font-family:Arial,sans-serif;max-width:650px;\">`;\n\n// Today section\nif (todayInterviews.length > 0) {\n  emailHtml += `<h2 style=\"color:#1a5276;border-bottom:2px solid #1a5276;padding-bottom:8px;\">Today's Interviews (${todayInterviews.length})</h2>`;\n  todayInterviews.forEach(iv => { emailHtml += formatInterview(iv); });\n} else {\n  emailHtml += `<h2 style=\"color:#1a5276;\">No interviews today</h2>`;\n}\n\n// Tomorrow section\nif (tomorrowInterviews.length > 0) {\n  emailHtml += `<h2 style=\"color:#2e86c1;border-bottom:2px solid #2e86c1;padding-bottom:8px;margin-top:24px;\">Tomorrow's Interviews (${tomorrowInterviews.length})</h2>`;\n  tomorrowInterviews.forEach(iv => { emailHtml += formatInterview(iv); });\n}\n\n// Quick reminders\nemailHtml += `<div style=\"margin-top:24px;padding:16px;background:#eaf2f8;border-radius:8px;\">`;\nemailHtml += `<h3 style=\"margin:0 0 8px 0;\">Quick Reminders</h3>`;\nemailHtml += `<ul style=\"margin:0;padding-left:20px;\">`;\nemailHtml += `<li>Test video/audio 15 minutes before remote interviews</li>`;\nemailHtml += `<li>Have a glass of water and your notes ready</li>`;\nemailHtml += `<li>Review your prep brief one final time</li>`;\nemailHtml += `<li>Prepare 2-3 questions to ask at the end</li>`;\nemailHtml += `</ul></div>`;\n\nemailHtml += `<hr style=\"margin-top:24px;\"><p style=\"font-size:12px;color:#888;\">Selvi Job App &mdash; Module 6: Interview Scheduling &amp; Preparation</p></div>`;\n\nconst totalToday = todayInterviews.length;\nconst totalTomorrow = tomorrowInterviews.length;\nlet subject = '';\nif (totalToday > 0 && totalTomorrow > 0) {\n  subject = `Today: ${totalToday} interview${totalToday > 1 ? 's' : ''} | Tomorrow: ${totalTomorrow} interview${totalTomorrow > 1 ? 's' : ''}`;\n} else if (totalToday > 0) {\n  subject = `Today's Interviews: ${totalToday} scheduled`;\n} else {\n  subject = `Tomorrow's Interviews: ${totalTomorrow} scheduled`;\n}\n\nreturn {\n  subject: subject,\n  emailHtml: emailHtml,\n  totalToday: totalToday,\n  totalTomorrow: totalTomorrow\n};"
+        },
+        "id": "build-email",
+        "name": "Build Briefing Email",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          660,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": {{ JSON.stringify($json.subject) }},\n  \"html\": {{ JSON.stringify($json.emailHtml) }}\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "send-briefing",
+        "name": "Send Daily Briefing",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Daily 7:30 AM": {
+        "main": [
+          [
+            {
+              "node": "Get Today & Tomorrow Interviews",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Today & Tomorrow Interviews": {
+        "main": [
+          [
+            {
+              "node": "Any Interviews?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Any Interviews?": {
+        "main": [
+          [
+            {
+              "node": "Build Briefing Email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Build Briefing Email": {
+        "main": [
+          [
+            {
+              "node": "Send Daily Briefing",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:14:31.289Z",
+        "id": 27,
+        "workflowId": "VGi4OAdRy3rOP2e9",
+        "versionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:30.567Z",
+        "id": 108,
+        "workflowId": "VGi4OAdRy3rOP2e9",
+        "versionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:30.590Z",
+        "id": 109,
+        "workflowId": "VGi4OAdRy3rOP2e9",
+        "versionId": "d0a8ff1d-0ed5-4aef-9c7b-6bb5c6af9da3",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

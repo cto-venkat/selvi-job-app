@@ -1,0 +1,183 @@
+{
+  "name": "WF4-REPORT: Weekly Pipeline Report",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Sunday 6PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    ai.application_id, a.company_name, a.job_title, a.pipeline_track,\n    ai.scheduled_at, ai.interview_type, ai.location, ai.platform\nFROM application_interviews ai\nJOIN applications a ON ai.application_id = a.id\nWHERE ai.status = 'scheduled'\n  AND ai.scheduled_at BETWEEN NOW() AND NOW() + INTERVAL '7 days'\nORDER BY ai.scheduled_at ASC;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_interviews",
+      "name": "Upcoming Interviews",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, -300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT company_name, job_title, pipeline_track, current_state, offer_at\nFROM applications\nWHERE current_state IN ('offer_received', 'negotiating')\nORDER BY offer_at DESC;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_offers",
+      "name": "Pending Offers",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, -150],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    COUNT(*) FILTER (WHERE applied_at >= NOW() - INTERVAL '7 days') AS apps_this_week,\n    COUNT(*) FILTER (WHERE current_state = 'rejected' AND resolved_at >= NOW() - INTERVAL '7 days') AS rejections_this_week,\n    COUNT(*) FILTER (WHERE current_state = 'ghosted' AND ghosting_detected_at >= NOW() - INTERVAL '7 days') AS ghosted_this_week,\n    COUNT(*) FILTER (WHERE acknowledged_at >= NOW() - INTERVAL '7 days') AS acks_this_week,\n    COUNT(*) FILTER (WHERE first_interview_at >= NOW() - INTERVAL '7 days') AS interviews_this_week\nFROM applications;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_activity",
+      "name": "This Week Activity",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT pipeline_track, current_state, COUNT(*) AS count\nFROM applications\nWHERE is_active = true\nGROUP BY pipeline_track, current_state\nORDER BY pipeline_track, current_state;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_snapshot",
+      "name": "Pipeline Snapshot",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 150],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT\n    COALESCE(discovery_source, 'unknown') AS source,\n    COUNT(*) AS total,\n    COUNT(*) FILTER (WHERE current_state NOT IN ('applied', 'ghosted', 'expired')) AS responded,\n    CASE WHEN COUNT(*) > 0 THEN\n        ROUND(COUNT(*) FILTER (WHERE current_state NOT IN ('applied', 'ghosted', 'expired'))::numeric / COUNT(*)::numeric * 100, 0)\n    ELSE 0 END AS response_pct\nFROM applications\nWHERE applied_at IS NOT NULL\nGROUP BY discovery_source\nORDER BY total DESC;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_sources",
+      "name": "Source Performance",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.company_name, a.job_title, a.current_state, a.pipeline_track,\n       a.next_follow_up_at\nFROM applications a\nWHERE a.is_active = true\n  AND a.next_follow_up_at <= NOW() + INTERVAL '7 days'\n  AND a.next_follow_up_at IS NOT NULL\n  AND (a.follow_up_snoozed_until IS NULL OR a.follow_up_snoozed_until < NOW())\nORDER BY a.next_follow_up_at ASC\nLIMIT 10;",
+        "options": { "queryBatching": "independently" }
+      },
+      "id": "pg_followups",
+      "name": "Follow-Ups Due",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true,
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [250, 450],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const interviews = $('Upcoming Interviews').all().map(i => i.json);\nconst offers = $('Pending Offers').all().map(i => i.json);\nconst activity = $('This Week Activity').first().json;\nconst snapshot = $('Pipeline Snapshot').all().map(i => i.json);\nconst sources = $('Source Performance').all().map(i => i.json);\nconst followups = $('Follow-Ups Due').all().map(i => i.json);\n\nconst now = new Date();\nconst weekStart = new Date(now);\nweekStart.setDate(now.getDate() - 7);\nconst dateRange = `${weekStart.toLocaleDateString('en-GB', {day:'numeric',month:'short'})} - ${now.toLocaleDateString('en-GB', {day:'numeric',month:'short',year:'numeric'})}`;\n\n// Build pipeline summary\nlet corporateTotal = 0, academicTotal = 0;\nconst stateRows = {};\nfor (const s of snapshot) {\n    if (!s.pipeline_track) continue;\n    const key = s.current_state;\n    if (!stateRows[key]) stateRows[key] = { corporate: 0, academic: 0 };\n    stateRows[key][s.pipeline_track] = parseInt(s.count) || 0;\n    if (s.pipeline_track === 'corporate') corporateTotal += parseInt(s.count) || 0;\n    else academicTotal += parseInt(s.count) || 0;\n}\n\nlet pipelineHtml = '<table style=\"width:100%;border-collapse:collapse;\">';\npipelineHtml += '<tr style=\"background:#f3f4f6;\"><th style=\"padding:8px;text-align:left;border:1px solid #e5e7eb;\">Stage</th><th style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">Corporate</th><th style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">Academic</th></tr>';\nconst stageOrder = ['shortlisted','cv_tailored','applied','acknowledged','screening','interviewing','assessment','offer_received','negotiating','pre_employment','academic_longlisted','academic_shortlisted'];\nfor (const stage of stageOrder) {\n    if (!stateRows[stage]) continue;\n    const label = stage.replace(/_/g, ' ').replace(/\\b\\w/g, c => c.toUpperCase());\n    pipelineHtml += `<tr><td style=\"padding:6px 8px;border:1px solid #e5e7eb;\">${label}</td><td style=\"padding:6px 8px;text-align:center;border:1px solid #e5e7eb;\">${stateRows[stage].corporate || 0}</td><td style=\"padding:6px 8px;text-align:center;border:1px solid #e5e7eb;\">${stateRows[stage].academic || 0}</td></tr>`;\n}\npipelineHtml += `<tr style=\"font-weight:bold;background:#f3f4f6;\"><td style=\"padding:8px;border:1px solid #e5e7eb;\">Total Active</td><td style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">${corporateTotal}</td><td style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">${academicTotal}</td></tr></table>`;\n\n// Interviews section\nlet interviewsHtml = '';\nif (interviews.length > 0 && interviews[0].application_id) {\n    interviewsHtml = '<h3 style=\"color:#dc2626;\">Upcoming Interviews</h3><ul>';\n    for (const iv of interviews) {\n        const dt = iv.scheduled_at ? new Date(iv.scheduled_at).toLocaleDateString('en-GB', {weekday:'short',day:'numeric',month:'short',hour:'2-digit',minute:'2-digit'}) : 'TBC';\n        interviewsHtml += `<li><strong>${iv.job_title}</strong> at ${iv.company_name} — ${dt} (${iv.interview_type || 'interview'}${iv.platform ? ', ' + iv.platform : ''})</li>`;\n    }\n    interviewsHtml += '</ul>';\n} else {\n    interviewsHtml = '<p style=\"color:#6b7280;\">No interviews scheduled for next week.</p>';\n}\n\n// Offers section\nlet offersHtml = '';\nif (offers.length > 0 && offers[0].company_name) {\n    offersHtml = '<h3 style=\"color:#059669;\">Pending Offers</h3><ul>';\n    for (const o of offers) {\n        offersHtml += `<li><strong>${o.job_title}</strong> at ${o.company_name} (${o.current_state.replace(/_/g, ' ')})</li>`;\n    }\n    offersHtml += '</ul>';\n}\n\n// Activity section\nlet activityHtml = `<h3>This Week\\'s Activity</h3><table style=\"width:100%;border-collapse:collapse;\">`;\nactivityHtml += `<tr><td style=\"padding:6px 8px;\">Applications submitted</td><td style=\"padding:6px 8px;font-weight:bold;\">${activity.apps_this_week || 0}</td></tr>`;\nactivityHtml += `<tr><td style=\"padding:6px 8px;\">Acknowledgements received</td><td style=\"padding:6px 8px;font-weight:bold;\">${activity.acks_this_week || 0}</td></tr>`;\nactivityHtml += `<tr><td style=\"padding:6px 8px;\">Interviews secured</td><td style=\"padding:6px 8px;font-weight:bold;\">${activity.interviews_this_week || 0}</td></tr>`;\nactivityHtml += `<tr><td style=\"padding:6px 8px;\">Rejections</td><td style=\"padding:6px 8px;font-weight:bold;\">${activity.rejections_this_week || 0}</td></tr>`;\nactivityHtml += `<tr><td style=\"padding:6px 8px;\">Ghosted detections</td><td style=\"padding:6px 8px;font-weight:bold;\">${activity.ghosted_this_week || 0}</td></tr>`;\nactivityHtml += '</table>';\n\n// Sources section\nlet sourcesHtml = '';\nif (sources.length > 0 && sources[0].source) {\n    sourcesHtml = '<h3>Source Performance</h3><table style=\"width:100%;border-collapse:collapse;\">';\n    sourcesHtml += '<tr style=\"background:#f3f4f6;\"><th style=\"padding:8px;text-align:left;border:1px solid #e5e7eb;\">Source</th><th style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">Applied</th><th style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">Responded</th><th style=\"padding:8px;text-align:center;border:1px solid #e5e7eb;\">Rate</th></tr>';\n    for (const s of sources) {\n        sourcesHtml += `<tr><td style=\"padding:6px 8px;border:1px solid #e5e7eb;\">${s.source}</td><td style=\"padding:6px 8px;text-align:center;border:1px solid #e5e7eb;\">${s.total}</td><td style=\"padding:6px 8px;text-align:center;border:1px solid #e5e7eb;\">${s.responded}</td><td style=\"padding:6px 8px;text-align:center;border:1px solid #e5e7eb;\">${s.response_pct}%</td></tr>`;\n    }\n    sourcesHtml += '</table>';\n}\n\n// Follow-ups section\nlet followupsHtml = '';\nif (followups.length > 0 && followups[0].company_name) {\n    followupsHtml = '<h3>Follow-Ups Due This Week</h3><ul>';\n    for (const f of followups) {\n        followupsHtml += `<li><strong>${f.job_title}</strong> at ${f.company_name} (${f.pipeline_track})</li>`;\n    }\n    followupsHtml += '</ul>';\n}\n\n// Assemble full email\nconst fullHtml = `<div style=\"font-family: Arial, sans-serif; max-width: 700px; margin: 0 auto; padding: 20px;\">\n    <h1 style=\"color: #1e40af; border-bottom: 2px solid #3b82f6; padding-bottom: 10px;\">Weekly Pipeline Summary</h1>\n    <p style=\"color: #6b7280;\">${dateRange}</p>\n\n    ${interviewsHtml}\n    ${offersHtml}\n\n    <h3>Pipeline Snapshot</h3>\n    ${pipelineHtml}\n\n    ${activityHtml}\n    ${followupsHtml}\n    ${sourcesHtml}\n\n    <hr style=\"border: 1px solid #e5e7eb; margin-top: 30px;\">\n    <p style=\"color: #9ca3af; font-size: 11px;\">Selvi Job Tracker | Weekly Pipeline Report | Generated ${now.toISOString()}</p>\n</div>`;\n\nconst subject = `Weekly Pipeline Summary — ${dateRange}`;\n\nreturn [{ json: {\n    subject,\n    html: fullHtml,\n    activeCount: corporateTotal + academicTotal,\n    dateRange\n}}];"
+      },
+      "id": "code_assemble",
+      "name": "Assemble Report",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [600, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "Authorization", "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15" },
+            { "name": "Content-Type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job Tracker <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": {{ JSON.stringify($json.subject) }},\n  \"html\": {{ JSON.stringify($json.html) }}\n}",
+        "options": { "timeout": 30000 }
+      },
+      "id": "http_resend",
+      "name": "Send Weekly Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [850, 0]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_log (notification_type, recipient, jobs_included, status)\nVALUES ('weekly_summary', 'chellamma.uk@gmail.com', {{ $('Assemble Report').item.json.activeCount }}, 'sent');",
+        "options": {}
+      },
+      "id": "pg_log",
+      "name": "Log Report Sent",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1100, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      }
+    }
+  ],
+  "connections": {
+    "Sunday 6PM": { "main": [[{ "node": "Upcoming Interviews", "type": "main", "index": 0 }]] },
+    "Upcoming Interviews": { "main": [[{ "node": "Pending Offers", "type": "main", "index": 0 }]] },
+    "Pending Offers": { "main": [[{ "node": "This Week Activity", "type": "main", "index": 0 }]] },
+    "This Week Activity": { "main": [[{ "node": "Pipeline Snapshot", "type": "main", "index": 0 }]] },
+    "Pipeline Snapshot": { "main": [[{ "node": "Source Performance", "type": "main", "index": 0 }]] },
+    "Source Performance": { "main": [[{ "node": "Follow-Ups Due", "type": "main", "index": 0 }]] },
+    "Follow-Ups Due": { "main": [[{ "node": "Assemble Report", "type": "main", "index": 0 }]] },
+    "Assemble Report": { "main": [[{ "node": "Send Weekly Report", "type": "main", "index": 0 }]] },
+    "Send Weekly Report": { "main": [[{ "node": "Log Report Sent", "type": "main", "index": 0 }]] }
+  },
+  "settings": { "executionOrder": "v1", "timezone": "Europe/London" }
+}

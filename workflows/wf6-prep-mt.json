@@ -1,0 +1,1202 @@
+{
+  "updatedAt": "2026-04-04T14:22:24.369Z",
+  "createdAt": "2026-04-02T17:11:49.013Z",
+  "id": "c22XxluRJOWGj4RW",
+  "name": "WF6-PREP: Interview Prep Brief Generator",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 30 Minutes",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.interview_duration_minutes, i.location_type, i.physical_address, i.video_platform, i.video_link, i.interviewer_names, i.interviewer_titles, i.what_to_prepare, i.what_to_bring, i.dress_code, i.additional_instructions, i.application_id, i.detection_confidence FROM interviews i WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND i.status IN ('calendared', 'parsed', 'pending_confirmation') AND i.interview_date >= CURRENT_DATE AND i.prep_failed = false AND NOT EXISTS (SELECT 1 FROM prep_briefs pb WHERE pb.interview_id = i.id) ORDER BY i.interview_date ASC, i.interview_start_time ASC LIMIT 5;",
+        "options": {}
+      },
+      "id": "find-interviews",
+      "name": "Find Interviews Needing Prep",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-results",
+              "leftValue": "={{ $json.interview_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-results",
+      "name": "Has Interviews?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cr.research_data, cr.research_completeness, cr.researched_at FROM company_research cr WHERE cr.company_name_normalised = LOWER(REGEXP_REPLACE('{{ $json.company_name }}', '\\s+(Ltd|PLC|LLP|Limited|Inc)\\.?$', '', 'i')) AND cr.expires_at > NOW() LIMIT 1;",
+        "options": {}
+      },
+      "id": "get-company-research",
+      "name": "Get Company Research",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sr.salary_min, sr.salary_max, sr.salary_median, sr.salary_currency, sr.academic_grade, sr.spine_point_min, sr.spine_point_max, sr.typical_bonus_percentage, sr.typical_pension_percentage, sr.benefits_notes FROM salary_research sr WHERE sr.role_title_normalised = LOWER('{{ $json.role_title }}') AND sr.expires_at > NOW() ORDER BY sr.researched_at DESC LIMIT 1;",
+        "options": {}
+      },
+      "id": "get-salary-research",
+      "name": "Get Salary Research",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        220
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Assemble the prompt context for Claude Sonnet\nconst interview = $('Has Interviews?').first().json;\nconst companyData = $('Get Company Research').first().json;\nconst salaryData = $('Get Salary Research').first().json;\n\nconst companyResearch = companyData.research_data \n  ? `COMPANY RESEARCH:\\n${JSON.stringify(companyData.research_data, null, 2)}\\nResearch completeness: ${companyData.research_completeness || 'none'}`\n  : 'COMPANY RESEARCH: No cached research available. Use publicly known information about this company.';\n\nconst salaryInfo = salaryData.salary_min\n  ? `SALARY INTELLIGENCE:\\n- Range: ${salaryData.salary_currency || 'GBP'} ${salaryData.salary_min} - ${salaryData.salary_max}\\n- Median: ${salaryData.salary_currency || 'GBP'} ${salaryData.salary_median}\\n- Typical bonus: ${salaryData.typical_bonus_percentage || 'N/A'}%\\n- Typical pension: ${salaryData.typical_pension_percentage || 'N/A'}%\\n- Benefits notes: ${salaryData.benefits_notes || 'N/A'}`\n  : 'SALARY INTELLIGENCE: No cached salary data. Provide general UK market guidance for this role level.';\n\nconst interviewerInfo = interview.interviewer_names && interview.interviewer_names.length > 0\n  ? `INTERVIEWERS: ${interview.interviewer_names.join(', ')}${interview.interviewer_titles ? ' (' + interview.interviewer_titles.join(', ') + ')' : ''}`\n  : 'INTERVIEWERS: Not specified';\n\nconst prompt = `Generate a comprehensive interview preparation brief for the following interview.\n\nCANDIDATE PROFILE:\n- PhD + MBA professional with 18 years of HR/L&D experience\n- Currently targeting UK L&D Manager to Head of L&D roles (corporate) and Lecturer/Senior Lecturer positions (academic)\n- Target salary: GBP 70,000-80,000 (corporate) or appropriate academic grade\n- Location: Maidenhead, UK\n- Key strengths: stakeholder management, programme design & delivery, ROI measurement, change management, digital learning strategy\n- 90% callback-to-offer rate\n\nINTERVIEW DETAILS:\n- Company: ${interview.company_name}\n- Role: ${interview.role_title}\n- Track: ${interview.interview_track}\n- Format: ${interview.interview_format}\n- Stage: ${interview.interview_stage || 'Not specified'}\n- Date: ${interview.interview_date}\n- Time: ${interview.interview_start_time || 'TBC'} - ${interview.interview_end_time || 'TBC'}\n- Duration: ${interview.interview_duration_minutes || 60} minutes\n- Location type: ${interview.location_type || 'Not specified'}\n- Physical address: ${interview.physical_address || 'N/A'}\n- Video platform: ${interview.video_platform || 'N/A'}\n${interviewerInfo}\n- What to prepare: ${interview.what_to_prepare || 'Not specified'}\n- What to bring: ${interview.what_to_bring || 'Not specified'}\n- Dress code: ${interview.dress_code || 'Not specified'}\n- Additional instructions: ${interview.additional_instructions || 'None'}\n\n${companyResearch}\n\n${salaryInfo}\n\nPlease generate a structured preparation brief with these sections:\n\n1. **COMPANY OVERVIEW** - Key facts, culture, recent news, strategic direction\n2. **ROLE ANALYSIS** - Key requirements, likely priorities, challenges the hiring manager faces\n3. **YOUR FIT** - How the candidate's experience maps to role requirements, key selling points\n4. **LIKELY QUESTIONS** (${interview.interview_track === 'academic' ? 'academic format: teaching philosophy, research alignment, REF impact' : 'UK competency-based STAR format'}) - 8-10 questions with suggested STAR response angles\n5. **QUESTIONS TO ASK** - 5-7 intelligent questions that demonstrate understanding and genuine interest\n6. **SALARY & NEGOTIATION INTELLIGENCE** - Market rates, negotiation leverage points, benefits to discuss\n7. **LOGISTICS & FORMAT TIPS** - Format-specific advice, technology checks, timing\n8. **FINAL CHECKLIST** - Day-before and day-of checklist items\n\nBe specific to this company and role. Avoid generic advice. Reference UK employment practices and norms.`;\n\nreturn {\n  interview_id: interview.interview_id,\n  company_name: interview.company_name,\n  role_title: interview.role_title,\n  interview_date: interview.interview_date,\n  interview_track: interview.interview_track,\n  prompt: prompt\n};"
+      },
+      "id": "assemble-prompt",
+      "name": "Assemble Prompt",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "={{ $credentials.anthropicApi.apiKey }}"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 8000,\n  \"temperature\": 0.3,\n  \"system\": \"You are an expert career coach and interview preparation specialist with deep knowledge of UK corporate L&D and UK higher education hiring practices. Generate thorough, specific, actionable preparation briefs.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+        "options": {
+          "timeout": 120000
+        }
+      },
+      "id": "claude-sonnet",
+      "name": "Claude Sonnet: Generate Brief",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1500,
+        0
+      ],
+      "credentials": {
+        "httpCustomAuth": {
+          "id": "niaedqDRwvoilXyi",
+          "name": "Anthropic API"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $('Assemble Prompt').first().json;\nconst response = $('Claude Sonnet: Generate Brief').first().json;\n\n// Check for API error\nif (response.error || !response.content || !response.content[0]) {\n  return {\n    interview_id: input.interview_id,\n    company_name: input.company_name,\n    role_title: input.role_title,\n    success: false,\n    error: response.error?.message || 'No content in Claude response'\n  };\n}\n\nconst briefText = response.content[0].text;\nconst usage = response.usage || {};\n\n// Extract sections using regex\nconst sections = {};\nconst sectionPatterns = [\n  { key: 'company_overview', pattern: /\\*\\*(?:1\\.\\s*)?COMPANY OVERVIEW\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:2\\.|ROLE)|$)/i },\n  { key: 'role_analysis', pattern: /\\*\\*(?:2\\.\\s*)?ROLE ANALYSIS\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:3\\.|YOUR)|$)/i },\n  { key: 'candidate_fit', pattern: /\\*\\*(?:3\\.\\s*)?YOUR FIT\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:4\\.|LIKELY)|$)/i },\n  { key: 'likely_questions', pattern: /\\*\\*(?:4\\.\\s*)?LIKELY QUESTIONS\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:5\\.|QUESTIONS TO)|$)/i },\n  { key: 'questions_to_ask', pattern: /\\*\\*(?:5\\.\\s*)?QUESTIONS TO ASK\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:6\\.|SALARY)|$)/i },\n  { key: 'salary_intelligence', pattern: /\\*\\*(?:6\\.\\s*)?SALARY.*?INTELLIGENCE\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:7\\.|LOGISTICS)|$)/i },\n  { key: 'logistics_and_format', pattern: /\\*\\*(?:7\\.\\s*)?LOGISTICS.*?\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:8\\.|FINAL)|$)/i },\n  { key: 'final_checklist', pattern: /\\*\\*(?:8\\.\\s*)?FINAL CHECKLIST\\*\\*([\\s\\S]*?)$/i }\n];\n\nfor (const sp of sectionPatterns) {\n  const match = briefText.match(sp.pattern);\n  sections[sp.key] = match ? match[1].trim() : null;\n}\n\n// Calculate cost (Sonnet pricing: $3/MTok input, $15/MTok output)\nconst inputTokens = usage.input_tokens || 0;\nconst outputTokens = usage.output_tokens || 0;\nconst costUsd = (inputTokens * 3 / 1000000) + (outputTokens * 15 / 1000000);\n\nreturn {\n  interview_id: input.interview_id,\n  company_name: input.company_name,\n  role_title: input.role_title,\n  interview_date: input.interview_date,\n  interview_track: input.interview_track,\n  full_brief_text: briefText,\n  sections: sections,\n  model_used: 'claude-sonnet-4-20250514',\n  prompt_tokens: inputTokens,\n  completion_tokens: outputTokens,\n  generation_cost_usd: costUsd,\n  success: true\n};"
+      },
+      "id": "parse-brief",
+      "name": "Parse Brief Sections",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1720,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "check-success",
+              "leftValue": "={{ $json.success }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "check-success",
+      "name": "Brief Generated?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1940,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO prep_briefs (tenant_id, interview_id, company_overview, role_analysis, candidate_fit, likely_questions, questions_to_ask, salary_intelligence, logistics_and_format, final_checklist, full_brief_text, brief_format, model_used, prompt_tokens, completion_tokens, generation_cost_usd, generation_attempts) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.interview_id }}', {{ $json.sections.company_overview ? \"'\" + $json.sections.company_overview.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.role_analysis ? \"'\" + $json.sections.role_analysis.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.candidate_fit ? \"'\" + $json.sections.candidate_fit.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.likely_questions ? \"'\" + JSON.stringify($json.sections.likely_questions).replace(/'/g, \"''\") + \"'::jsonb\" : 'NULL' }}, {{ $json.sections.questions_to_ask ? \"'\" + JSON.stringify($json.sections.questions_to_ask).replace(/'/g, \"''\") + \"'::jsonb\" : 'NULL' }}, {{ $json.sections.salary_intelligence ? \"'\" + $json.sections.salary_intelligence.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.logistics_and_format ? \"'\" + $json.sections.logistics_and_format.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.final_checklist ? \"'\" + $json.sections.final_checklist.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, '{{ $json.full_brief_text.replace(/'/g, \"''\") }}', 'markdown', '{{ $json.model_used }}', {{ $json.prompt_tokens }}, {{ $json.completion_tokens }}, {{ $json.generation_cost_usd }}, 1) RETURNING id;",
+        "options": {}
+      },
+      "id": "save-brief",
+      "name": "Save Brief to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"Prep Ready: {{ $('Parse Brief Sections').first().json.company_name }} - {{ $('Parse Brief Sections').first().json.role_title }} ({{ $('Parse Brief Sections').first().json.interview_date }})\",\n  \"html\": \"<h2>Interview Preparation Brief</h2><h3>{{ $('Parse Brief Sections').first().json.company_name }} &mdash; {{ $('Parse Brief Sections').first().json.role_title }}</h3><p><strong>Date:</strong> {{ $('Parse Brief Sections').first().json.interview_date }} | <strong>Track:</strong> {{ $('Parse Brief Sections').first().json.interview_track }}</p><hr>\" + {{ JSON.stringify($('Parse Brief Sections').first().json.full_brief_text.replace(/\\n/g, '<br>')) }} + \"<hr><p><em>Selvi Job App &mdash; Module 6: Interview Preparation</em></p>\"\n}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "email-brief",
+      "name": "Email Brief to Candidate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE interviews SET status = 'prep_ready', updated_at = NOW() WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $('Parse Brief Sections').first().json.interview_id }}' AND status NOT IN ('completed', 'cancelled_by_employer', 'cancelled_by_candidate');",
+        "options": {}
+      },
+      "id": "update-status-ready",
+      "name": "Update Interview Status",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2600,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE prep_briefs SET delivered_at = NOW() WHERE interview_id = '{{ $('Parse Brief Sections').first().json.interview_id }}' AND delivered_at IS NULL;",
+        "options": {}
+      },
+      "id": "mark-delivered",
+      "name": "Mark Brief Delivered",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2600,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE interviews SET prep_failed = true, prep_failed_at = NOW(), prep_failed_reason = '{{ $json.error ? $json.error.substring(0, 500).replace(/'/g, \"''\") : \"Unknown error\" }}' WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $json.interview_id }}';",
+        "options": {}
+      },
+      "id": "mark-prep-failed",
+      "name": "Mark Prep Failed",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"Prep Brief Failed: {{ $json.company_name }} - {{ $json.role_title }}\",\n  \"html\": \"<h3>Prep Brief Generation Failed</h3><p>The interview preparation brief for <strong>{{ $json.company_name }} - {{ $json.role_title }}</strong> could not be generated.</p><p><strong>Error:</strong> {{ $json.error || 'Unknown error' }}</p><p>Manual preparation recommended.</p><hr><p><em>Selvi Job App &mdash; Module 6</em></p>\"\n}",
+        "options": {}
+      },
+      "id": "email-failure",
+      "name": "Email Failure Notice",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30 Minutes": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Find Interviews Needing Prep": {
+      "main": [
+        [
+          {
+            "node": "Has Interviews?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Interviews?": {
+      "main": [
+        [
+          {
+            "node": "Get Company Research",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Get Salary Research",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Get Company Research": {
+      "main": [
+        [
+          {
+            "node": "Assemble Prompt",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Salary Research": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Assemble Prompt": {
+      "main": [
+        [
+          {
+            "node": "Claude Sonnet: Generate Brief",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Sonnet: Generate Brief": {
+      "main": [
+        [
+          {
+            "node": "Parse Brief Sections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Brief Sections": {
+      "main": [
+        [
+          {
+            "node": "Brief Generated?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Brief Generated?": {
+      "main": [
+        [
+          {
+            "node": "Save Brief to DB",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Mark Prep Failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Brief to DB": {
+      "main": [
+        [
+          {
+            "node": "Email Brief to Candidate",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Brief to Candidate": {
+      "main": [
+        [
+          {
+            "node": "Update Interview Status",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Mark Brief Delivered",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Prep Failed": {
+      "main": [
+        [
+          {
+            "node": "Email Failure Notice",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Find Interviews Needing Prep",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Interview Status": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mark Brief Delivered": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Failure Notice": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 30 Minutes": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "337ef900-8216-4420-8ab3-0060298770a5",
+  "activeVersionId": "337ef900-8216-4420-8ab3-0060298770a5",
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:11:49.013Z",
+      "createdAt": "2026-04-02T17:11:49.013Z",
+      "role": "workflow:owner",
+      "workflowId": "c22XxluRJOWGj4RW",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:11:49.023Z",
+    "createdAt": "2026-04-02T17:11:49.023Z",
+    "versionId": "337ef900-8216-4420-8ab3-0060298770a5",
+    "workflowId": "c22XxluRJOWGj4RW",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 30
+              }
+            ]
+          }
+        },
+        "id": "schedule-trigger",
+        "name": "Every 30 Minutes",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT i.id AS interview_id, i.company_name, i.role_title, i.interview_track, i.interview_format, i.interview_stage, i.interview_date, i.interview_start_time, i.interview_end_time, i.interview_duration_minutes, i.location_type, i.physical_address, i.video_platform, i.video_link, i.interviewer_names, i.interviewer_titles, i.what_to_prepare, i.what_to_bring, i.dress_code, i.additional_instructions, i.application_id, i.detection_confidence FROM interviews i WHERE i.status IN ('calendared', 'parsed', 'pending_confirmation') AND i.interview_date >= CURRENT_DATE AND i.prep_failed = false AND NOT EXISTS (SELECT 1 FROM prep_briefs pb WHERE pb.interview_id = i.id) ORDER BY i.interview_date ASC, i.interview_start_time ASC LIMIT 5;",
+          "options": {}
+        },
+        "id": "find-interviews",
+        "name": "Find Interviews Needing Prep",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-results",
+                "leftValue": "={{ $json.interview_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "isNotEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-results",
+        "name": "Has Interviews?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT cr.research_data, cr.research_completeness, cr.researched_at FROM company_research cr WHERE cr.company_name_normalised = LOWER(REGEXP_REPLACE('{{ $json.company_name }}', '\\s+(Ltd|PLC|LLP|Limited|Inc)\\.?$', '', 'i')) AND cr.expires_at > NOW() LIMIT 1;",
+          "options": {}
+        },
+        "id": "get-company-research",
+        "name": "Get Company Research",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          660,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT sr.salary_min, sr.salary_max, sr.salary_median, sr.salary_currency, sr.academic_grade, sr.spine_point_min, sr.spine_point_max, sr.typical_bonus_percentage, sr.typical_pension_percentage, sr.benefits_notes FROM salary_research sr WHERE sr.role_title_normalised = LOWER('{{ $json.role_title }}') AND sr.expires_at > NOW() ORDER BY sr.researched_at DESC LIMIT 1;",
+          "options": {}
+        },
+        "id": "get-salary-research",
+        "name": "Get Salary Research",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          660,
+          220
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Assemble the prompt context for Claude Sonnet\nconst interview = $('Has Interviews?').first().json;\nconst companyData = $('Get Company Research').first().json;\nconst salaryData = $('Get Salary Research').first().json;\n\nconst companyResearch = companyData.research_data \n  ? `COMPANY RESEARCH:\\n${JSON.stringify(companyData.research_data, null, 2)}\\nResearch completeness: ${companyData.research_completeness || 'none'}`\n  : 'COMPANY RESEARCH: No cached research available. Use publicly known information about this company.';\n\nconst salaryInfo = salaryData.salary_min\n  ? `SALARY INTELLIGENCE:\\n- Range: ${salaryData.salary_currency || 'GBP'} ${salaryData.salary_min} - ${salaryData.salary_max}\\n- Median: ${salaryData.salary_currency || 'GBP'} ${salaryData.salary_median}\\n- Typical bonus: ${salaryData.typical_bonus_percentage || 'N/A'}%\\n- Typical pension: ${salaryData.typical_pension_percentage || 'N/A'}%\\n- Benefits notes: ${salaryData.benefits_notes || 'N/A'}`\n  : 'SALARY INTELLIGENCE: No cached salary data. Provide general UK market guidance for this role level.';\n\nconst interviewerInfo = interview.interviewer_names && interview.interviewer_names.length > 0\n  ? `INTERVIEWERS: ${interview.interviewer_names.join(', ')}${interview.interviewer_titles ? ' (' + interview.interviewer_titles.join(', ') + ')' : ''}`\n  : 'INTERVIEWERS: Not specified';\n\nconst prompt = `Generate a comprehensive interview preparation brief for the following interview.\n\nCANDIDATE PROFILE:\n- PhD + MBA professional with 18 years of HR/L&D experience\n- Currently targeting UK L&D Manager to Head of L&D roles (corporate) and Lecturer/Senior Lecturer positions (academic)\n- Target salary: GBP 70,000-80,000 (corporate) or appropriate academic grade\n- Location: Maidenhead, UK\n- Key strengths: stakeholder management, programme design & delivery, ROI measurement, change management, digital learning strategy\n- 90% callback-to-offer rate\n\nINTERVIEW DETAILS:\n- Company: ${interview.company_name}\n- Role: ${interview.role_title}\n- Track: ${interview.interview_track}\n- Format: ${interview.interview_format}\n- Stage: ${interview.interview_stage || 'Not specified'}\n- Date: ${interview.interview_date}\n- Time: ${interview.interview_start_time || 'TBC'} - ${interview.interview_end_time || 'TBC'}\n- Duration: ${interview.interview_duration_minutes || 60} minutes\n- Location type: ${interview.location_type || 'Not specified'}\n- Physical address: ${interview.physical_address || 'N/A'}\n- Video platform: ${interview.video_platform || 'N/A'}\n${interviewerInfo}\n- What to prepare: ${interview.what_to_prepare || 'Not specified'}\n- What to bring: ${interview.what_to_bring || 'Not specified'}\n- Dress code: ${interview.dress_code || 'Not specified'}\n- Additional instructions: ${interview.additional_instructions || 'None'}\n\n${companyResearch}\n\n${salaryInfo}\n\nPlease generate a structured preparation brief with these sections:\n\n1. **COMPANY OVERVIEW** - Key facts, culture, recent news, strategic direction\n2. **ROLE ANALYSIS** - Key requirements, likely priorities, challenges the hiring manager faces\n3. **YOUR FIT** - How the candidate's experience maps to role requirements, key selling points\n4. **LIKELY QUESTIONS** (${interview.interview_track === 'academic' ? 'academic format: teaching philosophy, research alignment, REF impact' : 'UK competency-based STAR format'}) - 8-10 questions with suggested STAR response angles\n5. **QUESTIONS TO ASK** - 5-7 intelligent questions that demonstrate understanding and genuine interest\n6. **SALARY & NEGOTIATION INTELLIGENCE** - Market rates, negotiation leverage points, benefits to discuss\n7. **LOGISTICS & FORMAT TIPS** - Format-specific advice, technology checks, timing\n8. **FINAL CHECKLIST** - Day-before and day-of checklist items\n\nBe specific to this company and role. Avoid generic advice. Reference UK employment practices and norms.`;\n\nreturn {\n  interview_id: interview.interview_id,\n  company_name: interview.company_name,\n  role_title: interview.role_title,\n  interview_date: interview.interview_date,\n  interview_track: interview.interview_track,\n  prompt: prompt\n};"
+        },
+        "id": "assemble-prompt",
+        "name": "Assemble Prompt",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "={{ $credentials.anthropicApi.apiKey }}"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 8000,\n  \"temperature\": 0.3,\n  \"system\": \"You are an expert career coach and interview preparation specialist with deep knowledge of UK corporate L&D and UK higher education hiring practices. Generate thorough, specific, actionable preparation briefs.\",\n  \"messages\": [\n    {\n      \"role\": \"user\",\n      \"content\": {{ JSON.stringify($json.prompt) }}\n    }\n  ]\n}",
+          "options": {
+            "timeout": 120000
+          }
+        },
+        "id": "claude-sonnet",
+        "name": "Claude Sonnet: Generate Brief",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1100,
+          0
+        ],
+        "credentials": {
+          "httpCustomAuth": {
+            "id": "niaedqDRwvoilXyi",
+            "name": "Anthropic API"
+          }
+        },
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "jsCode": "const input = $('Assemble Prompt').first().json;\nconst response = $('Claude Sonnet: Generate Brief').first().json;\n\n// Check for API error\nif (response.error || !response.content || !response.content[0]) {\n  return {\n    interview_id: input.interview_id,\n    company_name: input.company_name,\n    role_title: input.role_title,\n    success: false,\n    error: response.error?.message || 'No content in Claude response'\n  };\n}\n\nconst briefText = response.content[0].text;\nconst usage = response.usage || {};\n\n// Extract sections using regex\nconst sections = {};\nconst sectionPatterns = [\n  { key: 'company_overview', pattern: /\\*\\*(?:1\\.\\s*)?COMPANY OVERVIEW\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:2\\.|ROLE)|$)/i },\n  { key: 'role_analysis', pattern: /\\*\\*(?:2\\.\\s*)?ROLE ANALYSIS\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:3\\.|YOUR)|$)/i },\n  { key: 'candidate_fit', pattern: /\\*\\*(?:3\\.\\s*)?YOUR FIT\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:4\\.|LIKELY)|$)/i },\n  { key: 'likely_questions', pattern: /\\*\\*(?:4\\.\\s*)?LIKELY QUESTIONS\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:5\\.|QUESTIONS TO)|$)/i },\n  { key: 'questions_to_ask', pattern: /\\*\\*(?:5\\.\\s*)?QUESTIONS TO ASK\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:6\\.|SALARY)|$)/i },\n  { key: 'salary_intelligence', pattern: /\\*\\*(?:6\\.\\s*)?SALARY.*?INTELLIGENCE\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:7\\.|LOGISTICS)|$)/i },\n  { key: 'logistics_and_format', pattern: /\\*\\*(?:7\\.\\s*)?LOGISTICS.*?\\*\\*([\\s\\S]*?)(?=\\n\\*\\*(?:8\\.|FINAL)|$)/i },\n  { key: 'final_checklist', pattern: /\\*\\*(?:8\\.\\s*)?FINAL CHECKLIST\\*\\*([\\s\\S]*?)$/i }\n];\n\nfor (const sp of sectionPatterns) {\n  const match = briefText.match(sp.pattern);\n  sections[sp.key] = match ? match[1].trim() : null;\n}\n\n// Calculate cost (Sonnet pricing: $3/MTok input, $15/MTok output)\nconst inputTokens = usage.input_tokens || 0;\nconst outputTokens = usage.output_tokens || 0;\nconst costUsd = (inputTokens * 3 / 1000000) + (outputTokens * 15 / 1000000);\n\nreturn {\n  interview_id: input.interview_id,\n  company_name: input.company_name,\n  role_title: input.role_title,\n  interview_date: input.interview_date,\n  interview_track: input.interview_track,\n  full_brief_text: briefText,\n  sections: sections,\n  model_used: 'claude-sonnet-4-20250514',\n  prompt_tokens: inputTokens,\n  completion_tokens: outputTokens,\n  generation_cost_usd: costUsd,\n  success: true\n};"
+        },
+        "id": "parse-brief",
+        "name": "Parse Brief Sections",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1320,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "check-success",
+                "leftValue": "={{ $json.success }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "true"
+                }
+              }
+            ],
+            "combinator": "and"
+          },
+          "options": {}
+        },
+        "id": "check-success",
+        "name": "Brief Generated?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1540,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO prep_briefs (interview_id, company_overview, role_analysis, candidate_fit, likely_questions, questions_to_ask, salary_intelligence, logistics_and_format, final_checklist, full_brief_text, brief_format, model_used, prompt_tokens, completion_tokens, generation_cost_usd, generation_attempts) VALUES ('{{ $json.interview_id }}', {{ $json.sections.company_overview ? \"'\" + $json.sections.company_overview.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.role_analysis ? \"'\" + $json.sections.role_analysis.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.candidate_fit ? \"'\" + $json.sections.candidate_fit.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.likely_questions ? \"'\" + JSON.stringify($json.sections.likely_questions).replace(/'/g, \"''\") + \"'::jsonb\" : 'NULL' }}, {{ $json.sections.questions_to_ask ? \"'\" + JSON.stringify($json.sections.questions_to_ask).replace(/'/g, \"''\") + \"'::jsonb\" : 'NULL' }}, {{ $json.sections.salary_intelligence ? \"'\" + $json.sections.salary_intelligence.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.logistics_and_format ? \"'\" + $json.sections.logistics_and_format.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, {{ $json.sections.final_checklist ? \"'\" + $json.sections.final_checklist.replace(/'/g, \"''\") + \"'\" : 'NULL' }}, '{{ $json.full_brief_text.replace(/'/g, \"''\") }}', 'markdown', '{{ $json.model_used }}', {{ $json.prompt_tokens }}, {{ $json.completion_tokens }}, {{ $json.generation_cost_usd }}, 1) RETURNING id;",
+          "options": {}
+        },
+        "id": "save-brief",
+        "name": "Save Brief to DB",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1760,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": \"Prep Ready: {{ $('Parse Brief Sections').first().json.company_name }} - {{ $('Parse Brief Sections').first().json.role_title }} ({{ $('Parse Brief Sections').first().json.interview_date }})\",\n  \"html\": \"<h2>Interview Preparation Brief</h2><h3>{{ $('Parse Brief Sections').first().json.company_name }} &mdash; {{ $('Parse Brief Sections').first().json.role_title }}</h3><p><strong>Date:</strong> {{ $('Parse Brief Sections').first().json.interview_date }} | <strong>Track:</strong> {{ $('Parse Brief Sections').first().json.interview_track }}</p><hr>\" + {{ JSON.stringify($('Parse Brief Sections').first().json.full_brief_text.replace(/\\n/g, '<br>')) }} + \"<hr><p><em>Selvi Job App &mdash; Module 6: Interview Preparation</em></p>\"\n}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "email-brief",
+        "name": "Email Brief to Candidate",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1980,
+          -100
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE interviews SET status = 'prep_ready', updated_at = NOW() WHERE id = '{{ $('Parse Brief Sections').first().json.interview_id }}' AND status NOT IN ('completed', 'cancelled_by_employer', 'cancelled_by_candidate');",
+          "options": {}
+        },
+        "id": "update-status-ready",
+        "name": "Update Interview Status",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2200,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE prep_briefs SET delivered_at = NOW() WHERE interview_id = '{{ $('Parse Brief Sections').first().json.interview_id }}' AND delivered_at IS NULL;",
+          "options": {}
+        },
+        "id": "mark-delivered",
+        "name": "Mark Brief Delivered",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2200,
+          100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE interviews SET prep_failed = true, prep_failed_at = NOW(), prep_failed_reason = '{{ $json.error ? $json.error.substring(0, 500).replace(/'/g, \"''\") : \"Unknown error\" }}' WHERE id = '{{ $json.interview_id }}';",
+          "options": {}
+        },
+        "id": "mark-prep-failed",
+        "name": "Mark Prep Failed",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1760,
+          200
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"chellamma.uk@gmail.com\"],\n  \"subject\": \"Prep Brief Failed: {{ $json.company_name }} - {{ $json.role_title }}\",\n  \"html\": \"<h3>Prep Brief Generation Failed</h3><p>The interview preparation brief for <strong>{{ $json.company_name }} - {{ $json.role_title }}</strong> could not be generated.</p><p><strong>Error:</strong> {{ $json.error || 'Unknown error' }}</p><p>Manual preparation recommended.</p><hr><p><em>Selvi Job App &mdash; Module 6</em></p>\"\n}",
+          "options": {}
+        },
+        "id": "email-failure",
+        "name": "Email Failure Notice",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1980,
+          200
+        ]
+      }
+    ],
+    "connections": {
+      "Every 30 Minutes": {
+        "main": [
+          [
+            {
+              "node": "Find Interviews Needing Prep",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Find Interviews Needing Prep": {
+        "main": [
+          [
+            {
+              "node": "Has Interviews?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Interviews?": {
+        "main": [
+          [
+            {
+              "node": "Get Company Research",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Get Salary Research",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Get Company Research": {
+        "main": [
+          [
+            {
+              "node": "Assemble Prompt",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Salary Research": {
+        "main": []
+      },
+      "Assemble Prompt": {
+        "main": [
+          [
+            {
+              "node": "Claude Sonnet: Generate Brief",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Sonnet: Generate Brief": {
+        "main": [
+          [
+            {
+              "node": "Parse Brief Sections",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Brief Sections": {
+        "main": [
+          [
+            {
+              "node": "Brief Generated?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Brief Generated?": {
+        "main": [
+          [
+            {
+              "node": "Save Brief to DB",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Mark Prep Failed",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save Brief to DB": {
+        "main": [
+          [
+            {
+              "node": "Email Brief to Candidate",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Email Brief to Candidate": {
+        "main": [
+          [
+            {
+              "node": "Update Interview Status",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Mark Brief Delivered",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Mark Prep Failed": {
+        "main": [
+          [
+            {
+              "node": "Email Failure Notice",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:14:24.875Z",
+        "id": 26,
+        "workflowId": "c22XxluRJOWGj4RW",
+        "versionId": "337ef900-8216-4420-8ab3-0060298770a5",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:24.414Z",
+        "id": 84,
+        "workflowId": "c22XxluRJOWGj4RW",
+        "versionId": "337ef900-8216-4420-8ab3-0060298770a5",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:24.439Z",
+        "id": 85,
+        "workflowId": "c22XxluRJOWGj4RW",
+        "versionId": "337ef900-8216-4420-8ab3-0060298770a5",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

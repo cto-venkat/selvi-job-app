@@ -1,0 +1,1108 @@
+{
+  "updatedAt": "2026-04-04T21:23:34.298Z",
+  "createdAt": "2026-04-02T17:17:38.400Z",
+  "id": "LDzddhyhIOlFBiq1",
+  "name": "WF5-NOTIFY: Urgent Notification (M5)",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 2
+            }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "wf5n-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM system_config WHERE key = 'email_notifications_enabled';",
+        "options": {}
+      },
+      "name": "Check Notifications Enabled",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "id": "wf5n-check-enabled"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "enabled",
+              "leftValue": "={{ $json.value }}",
+              "rightValue": "true",
+              "operator": {
+                "type": "string",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Notifications Enabled?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        840,
+        0
+      ],
+      "id": "wf5n-if-enabled"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.id AS email_id, e.subject, e.from_email, e.from_name, e.date,\n       e.gmail_message_id,\n       ec.classification, ec.sub_category, ec.is_urgent,\n       eed.company_name, eed.role_title, eed.contact_person, eed.contact_email,\n       eed.interview_date, eed.interview_time, eed.interview_format,\n       eed.interview_platform, eed.interview_location, eed.interview_link,\n       eed.interviewer_name, eed.salary_offered, eed.salary_details,\n       eed.start_date, eed.action_required, eed.action_deadline,\n       eed.next_steps, eed.response_deadline\nFROM emails e\nJOIN email_classifications ec ON ec.email_id = e.id\nJOIN email_extracted_data eed ON eed.email_id = e.id\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND e.urgent_notification_sent = false\n    AND ec.is_urgent = true\n    AND ec.classification IN ('interview_invite', 'offer', 'follow_up_request')\n    AND e.status IN ('extracted', 'labeled', 'draft_created', 'completed')\nORDER BY e.date ASC\nLIMIT 5;",
+        "options": {}
+      },
+      "name": "Get Urgent Emails",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "id": "wf5n-get-urgent"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "has-urgent",
+              "leftValue": "={{ $json.email_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "notEmpty"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Urgent Emails Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1280,
+        -100
+      ],
+      "id": "wf5n-if-urgent"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Check throttle and quiet hours, format notification\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const email = item.json;\n  const now = new Date();\n  const ukHour = parseInt(now.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hour12: false }));\n  const isQuietHours = ukHour >= 22 || ukHour < 7;\n\n  // During quiet hours, only send for interview_invite and offer\n  // follow_up_request can wait unless deadline < 24h\n  if (isQuietHours && email.classification === 'follow_up_request') {\n    const deadline = email.action_deadline ? new Date(email.action_deadline) : null;\n    const hoursUntilDeadline = deadline ? (deadline.getTime() - now.getTime()) / 3600000 : 999;\n    if (hoursUntilDeadline > 24) {\n      // Skip during quiet hours\n      continue;\n    }\n  }\n\n  // Build notification subject and body\n  let notifSubject = '';\n  let notifBody = '';\n  let notifType = '';\n  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${email.gmail_message_id}`;\n\n  switch (email.classification) {\n    case 'interview_invite':\n      notifType = 'interview_alert';\n      notifSubject = `INTERVIEW: ${email.company_name || 'Unknown'} - ${email.role_title || 'Unknown Role'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #2563eb;\">Interview Invitation</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Date:</td><td style=\"padding: 8px; font-family: monospace;\">${email.interview_date || 'TBC'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Time:</td><td style=\"padding: 8px; font-family: monospace;\">${email.interview_time || 'TBC'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Format:</td><td style=\"padding: 8px;\">${email.interview_format || 'Not specified'}</td></tr>\n${email.interview_platform ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Platform:</td><td style=\"padding: 8px;\">${email.interview_platform}</td></tr>` : ''}\n${email.interview_location ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Location:</td><td style=\"padding: 8px;\">${email.interview_location}</td></tr>` : ''}\n${email.interview_link ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Link:</td><td style=\"padding: 8px;\"><a href=\"${email.interview_link}\">${email.interview_link}</a></td></tr>` : ''}\n${email.interviewer_name ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Interviewer:</td><td style=\"padding: 8px;\">${email.interviewer_name}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n\n    case 'offer':\n      notifType = 'offer_alert';\n      notifSubject = `OFFER: ${email.company_name || 'Unknown'} - ${email.role_title || 'Unknown Role'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #16a34a;\">Job Offer Received!</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n${email.salary_offered ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Salary:</td><td style=\"padding: 8px; font-family: monospace;\">GBP ${email.salary_offered.toLocaleString()}</td></tr>` : ''}\n${email.salary_details ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Details:</td><td style=\"padding: 8px;\">${email.salary_details}</td></tr>` : ''}\n${email.start_date ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Start Date:</td><td style=\"padding: 8px;\">${email.start_date}</td></tr>` : ''}\n${email.response_deadline ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Response By:</td><td style=\"padding: 8px; color: #dc2626; font-weight: bold;\">${email.response_deadline}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #16a34a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n\n    case 'follow_up_request':\n      notifType = 'follow_up_alert';\n      notifSubject = `ACTION NEEDED: ${email.company_name || 'Unknown'} - ${email.action_required || 'Follow-up required'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #ea580c;\">Follow-Up Action Required</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Action:</td><td style=\"padding: 8px; font-weight: bold;\">${email.action_required || 'See email'}</td></tr>\n${email.action_deadline ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Deadline:</td><td style=\"padding: 8px; color: #dc2626; font-weight: bold; font-family: monospace;\">${email.action_deadline}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #ea580c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n  }\n\n  if (notifSubject) {\n    results.push({\n      json: {\n        tenant_id: tenantId,\n        ...email,\n        notification_type: notifType,\n        notification_subject: notifSubject,\n        notification_body: notifBody,\n        gmail_link: gmailLink\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\nreturn results;"
+      },
+      "name": "Build Notifications",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        -200
+      ],
+      "id": "wf5n-build"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "not-skip",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "false"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Has Notifications?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1720,
+        -200
+      ],
+      "id": "wf5n-if-has-notif"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"{{ $json.notification_subject }}\",\n  \"html\": {{ JSON.stringify($json.notification_body) }}\n}",
+        "options": {
+          "response": {
+            "response": {
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "name": "Send via Resend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        -300
+      ],
+      "id": "wf5n-resend",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\n\nUPDATE emails SET\n    urgent_notification_sent = true,\n    urgent_notification_sent_at = NOW()\nWHERE id = '{{ $('Build Notifications').item.json.email_id }}'::uuid;\n\nINSERT INTO email_notifications (tenant_id, email_id, notification_type, channel, recipient,\n    subject, body, status,\n    resend_message_id, sent_at) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Build Notifications').item.json.email_id }}'::uuid,\n    '{{ $('Build Notifications').item.json.notification_type }}',\n    'email',\n    '{{ $('Loop Over Tenants').item.json.notification_email }}',\n    '{{ $('Build Notifications').item.json.notification_subject.replace(/'/g, \"''\") }}',\n    'HTML notification sent',\n    'sent',\n    '{{ $json.body?.id || $json.id || \"unknown\" }}',\n    NOW()\n);\n\nCOMMIT;",
+        "options": {
+          "queryBatching": "transaction"
+        }
+      },
+      "name": "Update Email + Log Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2160,
+        -300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "id": "wf5n-update"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_processing_log (tenant_id, email_id, workflow_name, step, status, details) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Build Notifications').item.json.email_id }}'::uuid,\n    'WF5-NOTIFY',\n    'urgent_notification',\n    'completed',\n    json_build_object(\n        'type', '{{ $('Build Notifications').item.json.notification_type }}',\n        'classification', '{{ $('Build Notifications').item.json.classification }}'\n    )\n);",
+        "options": {}
+      },
+      "name": "Log Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2380,
+        -300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "id": "wf5n-log"
+    },
+    {
+      "parameters": {},
+      "name": "No Urgent Emails",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1500,
+        0
+      ],
+      "id": "wf5n-noop"
+    },
+    {
+      "parameters": {},
+      "name": "Disabled",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1060,
+        100
+      ],
+      "id": "wf5n-disabled"
+    },
+    {
+      "parameters": {},
+      "name": "Throttled",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        1940,
+        -100
+      ],
+      "id": "wf5n-throttled"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Notifications Enabled": {
+      "main": [
+        [
+          {
+            "node": "Notifications Enabled?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Notifications Enabled?": {
+      "main": [
+        [
+          {
+            "node": "Get Urgent Emails",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Disabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Urgent Emails": {
+      "main": [
+        [
+          {
+            "node": "Urgent Emails Found?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Urgent Emails Found?": {
+      "main": [
+        [
+          {
+            "node": "Build Notifications",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Urgent Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Build Notifications": {
+      "main": [
+        [
+          {
+            "node": "Has Notifications?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Notifications?": {
+      "main": [
+        [
+          {
+            "node": "Send via Resend",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Throttled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send via Resend": {
+      "main": [
+        [
+          {
+            "node": "Update Email + Log Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Email + Log Notification": {
+      "main": [
+        [
+          {
+            "node": "Log Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Check Notifications Enabled",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Urgent Emails": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Disabled": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Throttled": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Schedule Trigger": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+  "activeVersionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+  "versionCounter": 14,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:17:38.400Z",
+      "createdAt": "2026-04-02T17:17:38.400Z",
+      "role": "workflow:owner",
+      "workflowId": "LDzddhyhIOlFBiq1",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:34.300Z",
+    "createdAt": "2026-04-04T21:23:34.300Z",
+    "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+    "workflowId": "LDzddhyhIOlFBiq1",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 2
+              }
+            ]
+          }
+        },
+        "name": "Schedule Trigger",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ],
+        "id": "wf5n-trigger"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT value FROM system_config WHERE key = 'email_notifications_enabled';",
+          "options": {}
+        },
+        "name": "Check Notifications Enabled",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          620,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "id": "wf5n-check-enabled"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "enabled",
+                "leftValue": "={{ $json.value }}",
+                "rightValue": "true",
+                "operator": {
+                  "type": "string",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "name": "Notifications Enabled?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          840,
+          0
+        ],
+        "id": "wf5n-if-enabled"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT e.id AS email_id, e.subject, e.from_email, e.from_name, e.date,\n       e.gmail_message_id,\n       ec.classification, ec.sub_category, ec.is_urgent,\n       eed.company_name, eed.role_title, eed.contact_person, eed.contact_email,\n       eed.interview_date, eed.interview_time, eed.interview_format,\n       eed.interview_platform, eed.interview_location, eed.interview_link,\n       eed.interviewer_name, eed.salary_offered, eed.salary_details,\n       eed.start_date, eed.action_required, eed.action_deadline,\n       eed.next_steps, eed.response_deadline\nFROM emails e\nJOIN email_classifications ec ON ec.email_id = e.id\nJOIN email_extracted_data eed ON eed.email_id = e.id\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND e.urgent_notification_sent = false\n    AND ec.is_urgent = true\n    AND ec.classification IN ('interview_invite', 'offer', 'follow_up_request')\n    AND e.status IN ('extracted', 'labeled', 'draft_created', 'completed')\nORDER BY e.date ASC\nLIMIT 5;",
+          "options": {}
+        },
+        "name": "Get Urgent Emails",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1060,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "id": "wf5n-get-urgent"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "has-urgent",
+                "leftValue": "={{ $json.email_id }}",
+                "rightValue": "",
+                "operator": {
+                  "type": "string",
+                  "operation": "notEmpty"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "name": "Urgent Emails Found?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1280,
+          -100
+        ],
+        "id": "wf5n-if-urgent"
+      },
+      {
+        "parameters": {
+          "jsCode": "// Check throttle and quiet hours, format notification\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\n\nfor (const item of items) {\n  const email = item.json;\n  const now = new Date();\n  const ukHour = parseInt(now.toLocaleString('en-GB', { timeZone: 'Europe/London', hour: '2-digit', hour12: false }));\n  const isQuietHours = ukHour >= 22 || ukHour < 7;\n\n  // During quiet hours, only send for interview_invite and offer\n  // follow_up_request can wait unless deadline < 24h\n  if (isQuietHours && email.classification === 'follow_up_request') {\n    const deadline = email.action_deadline ? new Date(email.action_deadline) : null;\n    const hoursUntilDeadline = deadline ? (deadline.getTime() - now.getTime()) / 3600000 : 999;\n    if (hoursUntilDeadline > 24) {\n      // Skip during quiet hours\n      continue;\n    }\n  }\n\n  // Build notification subject and body\n  let notifSubject = '';\n  let notifBody = '';\n  let notifType = '';\n  const gmailLink = `https://mail.google.com/mail/u/0/#inbox/${email.gmail_message_id}`;\n\n  switch (email.classification) {\n    case 'interview_invite':\n      notifType = 'interview_alert';\n      notifSubject = `INTERVIEW: ${email.company_name || 'Unknown'} - ${email.role_title || 'Unknown Role'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #2563eb;\">Interview Invitation</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Date:</td><td style=\"padding: 8px; font-family: monospace;\">${email.interview_date || 'TBC'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Time:</td><td style=\"padding: 8px; font-family: monospace;\">${email.interview_time || 'TBC'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Format:</td><td style=\"padding: 8px;\">${email.interview_format || 'Not specified'}</td></tr>\n${email.interview_platform ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Platform:</td><td style=\"padding: 8px;\">${email.interview_platform}</td></tr>` : ''}\n${email.interview_location ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Location:</td><td style=\"padding: 8px;\">${email.interview_location}</td></tr>` : ''}\n${email.interview_link ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Link:</td><td style=\"padding: 8px;\"><a href=\"${email.interview_link}\">${email.interview_link}</a></td></tr>` : ''}\n${email.interviewer_name ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Interviewer:</td><td style=\"padding: 8px;\">${email.interviewer_name}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #2563eb; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n\n    case 'offer':\n      notifType = 'offer_alert';\n      notifSubject = `OFFER: ${email.company_name || 'Unknown'} - ${email.role_title || 'Unknown Role'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #16a34a;\">Job Offer Received!</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n${email.salary_offered ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Salary:</td><td style=\"padding: 8px; font-family: monospace;\">GBP ${email.salary_offered.toLocaleString()}</td></tr>` : ''}\n${email.salary_details ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Details:</td><td style=\"padding: 8px;\">${email.salary_details}</td></tr>` : ''}\n${email.start_date ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Start Date:</td><td style=\"padding: 8px;\">${email.start_date}</td></tr>` : ''}\n${email.response_deadline ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Response By:</td><td style=\"padding: 8px; color: #dc2626; font-weight: bold;\">${email.response_deadline}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #16a34a; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n\n    case 'follow_up_request':\n      notifType = 'follow_up_alert';\n      notifSubject = `ACTION NEEDED: ${email.company_name || 'Unknown'} - ${email.action_required || 'Follow-up required'}`;\n      notifBody = `<html><body style=\"font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;\">\n<h2 style=\"color: #ea580c;\">Follow-Up Action Required</h2>\n<table style=\"width: 100%; border-collapse: collapse;\">\n<tr><td style=\"padding: 8px; font-weight: bold;\">Company:</td><td style=\"padding: 8px;\">${email.company_name || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Role:</td><td style=\"padding: 8px;\">${email.role_title || 'Not specified'}</td></tr>\n<tr><td style=\"padding: 8px; font-weight: bold;\">Action:</td><td style=\"padding: 8px; font-weight: bold;\">${email.action_required || 'See email'}</td></tr>\n${email.action_deadline ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Deadline:</td><td style=\"padding: 8px; color: #dc2626; font-weight: bold; font-family: monospace;\">${email.action_deadline}</td></tr>` : ''}\n${email.next_steps ? `<tr><td style=\"padding: 8px; font-weight: bold;\">Next Steps:</td><td style=\"padding: 8px;\">${email.next_steps}</td></tr>` : ''}\n</table>\n<br/>\n<a href=\"${gmailLink}\" style=\"display: inline-block; background: #ea580c; color: white; padding: 12px 24px; text-decoration: none; border-radius: 6px;\">View in Gmail</a>\n<br/><br/>\n<p style=\"color: #6b7280; font-size: 12px;\">Sent by Selvi Job App Email Management System</p>\n</body></html>`;\n      break;\n  }\n\n  if (notifSubject) {\n    results.push({\n      json: {\n        tenant_id: tenantId,\n        ...email,\n        notification_type: notifType,\n        notification_subject: notifSubject,\n        notification_body: notifBody,\n        gmail_link: gmailLink\n      }\n    });\n  }\n}\n\nif (results.length === 0) {\n  return [{ json: { skip: true } }];\n}\n\nreturn results;"
+        },
+        "name": "Build Notifications",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1500,
+          -200
+        ],
+        "id": "wf5n-build"
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "not-skip",
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "false"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "name": "Has Notifications?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          1720,
+          -200
+        ],
+        "id": "wf5n-if-has-notif"
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"from\": \"Selvi Job App <jobs@apiloom.io>\",\n  \"to\": [\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\n  \"subject\": \"{{ $json.notification_subject }}\",\n  \"html\": {{ JSON.stringify($json.notification_body) }}\n}",
+          "options": {
+            "response": {
+              "response": {
+                "fullResponse": true
+              }
+            }
+          }
+        },
+        "name": "Send via Resend",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1940,
+          -300
+        ],
+        "id": "wf5n-resend",
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "BEGIN;\n\nUPDATE emails SET\n    urgent_notification_sent = true,\n    urgent_notification_sent_at = NOW()\nWHERE id = '{{ $('Build Notifications').item.json.email_id }}'::uuid;\n\nINSERT INTO email_notifications (tenant_id, email_id, notification_type, channel, recipient,\n    subject, body, status,\n    resend_message_id, sent_at) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Build Notifications').item.json.email_id }}'::uuid,\n    '{{ $('Build Notifications').item.json.notification_type }}',\n    'email',\n    '{{ $('Loop Over Tenants').item.json.notification_email }}',\n    '{{ $('Build Notifications').item.json.notification_subject.replace(/'/g, \"''\") }}',\n    'HTML notification sent',\n    'sent',\n    '{{ $json.body?.id || $json.id || \"unknown\" }}',\n    NOW()\n);\n\nCOMMIT;",
+          "options": {
+            "queryBatching": "transaction"
+          }
+        },
+        "name": "Update Email + Log Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2160,
+          -300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "id": "wf5n-update"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO email_processing_log (tenant_id, email_id, workflow_name, step, status, details) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Build Notifications').item.json.email_id }}'::uuid,\n    'WF5-NOTIFY',\n    'urgent_notification',\n    'completed',\n    json_build_object(\n        'type', '{{ $('Build Notifications').item.json.notification_type }}',\n        'classification', '{{ $('Build Notifications').item.json.classification }}'\n    )\n);",
+          "options": {}
+        },
+        "name": "Log Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          2380,
+          -300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        },
+        "id": "wf5n-log"
+      },
+      {
+        "parameters": {},
+        "name": "No Urgent Emails",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1500,
+          0
+        ],
+        "id": "wf5n-noop"
+      },
+      {
+        "parameters": {},
+        "name": "Disabled",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1060,
+          100
+        ],
+        "id": "wf5n-disabled"
+      },
+      {
+        "parameters": {},
+        "name": "Throttled",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          1940,
+          -100
+        ],
+        "id": "wf5n-throttled"
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Schedule Trigger": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Notifications Enabled": {
+        "main": [
+          [
+            {
+              "node": "Notifications Enabled?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Notifications Enabled?": {
+        "main": [
+          [
+            {
+              "node": "Get Urgent Emails",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Disabled",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Urgent Emails": {
+        "main": [
+          [
+            {
+              "node": "Urgent Emails Found?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Urgent Emails Found?": {
+        "main": [
+          [
+            {
+              "node": "Build Notifications",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Urgent Emails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Build Notifications": {
+        "main": [
+          [
+            {
+              "node": "Has Notifications?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Notifications?": {
+        "main": [
+          [
+            {
+              "node": "Send via Resend",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Throttled",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send via Resend": {
+        "main": [
+          [
+            {
+              "node": "Update Email + Log Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Email + Log Notification": {
+        "main": [
+          [
+            {
+              "node": "Log Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Check Notifications Enabled",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Notification": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "No Urgent Emails": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Disabled": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Throttled": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:34.342Z",
+        "id": 123,
+        "workflowId": "LDzddhyhIOlFBiq1",
+        "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:34.365Z",
+        "id": 124,
+        "workflowId": "LDzddhyhIOlFBiq1",
+        "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:17.423Z",
+        "id": 181,
+        "workflowId": "LDzddhyhIOlFBiq1",
+        "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:17.447Z",
+        "id": 182,
+        "workflowId": "LDzddhyhIOlFBiq1",
+        "versionId": "351b1ab7-9192-4b32-9960-a5c9d806b7e2",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

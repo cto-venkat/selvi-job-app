@@ -1,0 +1,1072 @@
+{
+  "updatedAt": "2026-04-02T17:21:25.530Z",
+  "createdAt": "2026-04-02T17:20:27.976Z",
+  "id": "RjELbd8jHpE0mYLy",
+  "name": "WF4-GHOST: Ghosting & Follow-Up Engine",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8,14,20 * * *"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Every 6 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.company_name, a.job_title, a.pipeline_track, a.current_state,\n       EXTRACT(EPOCH FROM (NOW() - a.state_changed_at)) / 86400 AS days_in_state,\n       EXTRACT(EPOCH FROM (NOW() - a.applied_at)) / 86400 AS days_since_applied,\n       a.follow_up_count,\n       a.last_follow_up_at,\n       a.follow_up_snoozed_until,\n       a.applied_at,\n       a.state_changed_at,\n       a.reference_number\nFROM applications a\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND a.is_active = true\n  AND a.current_state IN ('applied', 'acknowledged', 'screening', 'interviewing', 'academic_longlisted', 'academic_shortlisted')\n  AND (a.follow_up_snoozed_until IS NULL OR a.follow_up_snoozed_until < NOW())\nORDER BY a.state_changed_at ASC;",
+        "options": {}
+      },
+      "id": "pg_fetch",
+      "name": "Fetch Active Applications",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        650,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const apps = $input.all();\nconst results = [];\n\nfor (const app of apps) {\n    const a = app.json;\n    const track = a.pipeline_track;\n    const state = a.current_state;\n    const daysInState = parseFloat(a.days_in_state) || 0;\n    const followUps = a.follow_up_count || 0;\n\n    const thresholds = {\n        corporate: {\n            applied: { warn: 7, ghost: 14, maxFollowups: 2 },\n            acknowledged: { warn: 10, ghost: 21, maxFollowups: 1 },\n            screening: { warn: 7, ghost: 14, maxFollowups: 1 },\n            interviewing: { warn: 7, ghost: 14, maxFollowups: 1 },\n        },\n        academic: {\n            applied: { warn: 21, ghost: 56, maxFollowups: 1 },\n            acknowledged: { warn: 28, ghost: 56, maxFollowups: 1 },\n            academic_longlisted: { warn: 28, ghost: 56, maxFollowups: 1 },\n            academic_shortlisted: { warn: 21, ghost: 42, maxFollowups: 1 },\n            screening: { warn: 14, ghost: 28, maxFollowups: 1 },\n            interviewing: { warn: 21, ghost: 42, maxFollowups: 1 },\n        }\n    };\n\n    const t = ((thresholds[track] || thresholds.corporate)[state]);\n    if (!t) {\n        results.push({ json: {\n        tenant_id: tenantId, ...a, action: 'ok' } });\n        continue;\n    }\n\n    let action = 'ok';\n    if (daysInState >= t.ghost && followUps >= t.maxFollowups) {\n        action = 'ghosted';\n    } else if (daysInState >= t.warn && followUps < t.maxFollowups) {\n        action = 'follow_up_due';\n    }\n\n    const reminderType = followUps === 0 ? 'initial_follow_up' : 'second_follow_up';\n\n    results.push({ json: {\n        tenant_id: tenantId, ...a, action, thresholdDays: t.warn, ghostDays: t.ghost, reminderType, daysInState: Math.round(daysInState) } });\n}\n\nreturn results;"
+      },
+      "id": "code_eval",
+      "name": "Evaluate Follow-Up Status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "follow_up_due",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "follow_up_due"
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict"
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.action }}",
+                    "rightValue": "ghosted",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              },
+              "renameOutput": true,
+              "outputKey": "ghosted"
+            }
+          ]
+        },
+        "options": {
+          "allMatchingOutputs": false,
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "switch_action",
+      "name": "Switch Action",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [
+        1150,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const a = $input.first().json;\nconst company = a.company_name;\nconst title = a.job_title;\nconst days = a.daysInState;\nconst track = a.pipeline_track;\nconst state = a.current_state;\nconst ref = a.reference_number ? ` (Ref: ${a.reference_number})` : '';\n\nlet suggestedAction = '';\nlet template = '';\n\nif (track === 'academic') {\n    suggestedAction = `Check university HR portal for status update. Academic hiring timelines are longer \u2014 ${days} days is approaching the follow-up threshold.`;\n    template = `Dear Hiring Committee,\\n\\nI submitted my application for the ${title} position${ref} and wanted to confirm it was received. I remain very interested in this opportunity and would welcome any update on the timeline.\\n\\nKind regards,\\nSelvi`;\n} else {\n    suggestedAction = `Send a polite follow-up email to ${company}. You applied ${days} days ago with no response.`;\n    template = `Dear Hiring Manager,\\n\\nI applied for the ${title} role${ref} at ${company} and wanted to follow up. I'm very interested in this opportunity and would appreciate any update on the status of my application.\\n\\nBest regards,\\nSelvi`;\n}\n\nconst subject = `Follow-up needed: ${title} at ${company} (${days} days)`;\nconst bodyHtml = `<h3>Follow-Up Reminder</h3><p><strong>${title}</strong> at <strong>${company}</strong></p><p>You applied ${days} days ago (${track} track, state: ${state}).</p><p><strong>Suggested action:</strong> ${suggestedAction}</p><h4>Suggested follow-up email:</h4><pre>${template}</pre>`;\n\nreturn [{ json: { ...a, subject, bodyHtml, suggestedAction, template } }];"
+      },
+      "id": "code_followup",
+      "name": "Generate Follow-Up Template",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1400,
+        -100
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO follow_up_log (tenant_id, application_id, reminder_type, suggested_action, follow_up_template, sent_at) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.id }}', '{{ $json.reminderType }}', '{{ $json.suggestedAction }}', '{{ $json.template }}', NOW());",
+        "options": {}
+      },
+      "id": "pg_followup_log",
+      "name": "Insert Follow-Up Log",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1650,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE applications SET\n    follow_up_count = follow_up_count + 1,\n    last_follow_up_at = NOW(),\n    next_follow_up_at = NOW() + INTERVAL '7 days'\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND id = '{{ $json.id }}';",
+        "options": {}
+      },
+      "id": "pg_update_followup",
+      "name": "Update Follow-Up Count",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1900,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_queue (tenant_id, application_id, notification_type, priority, subject, body_html, body_text) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.id }}',\n    'follow_up_reminder',\n    'high',\n    '{{ $json.subject }}',\n    '{{ $json.bodyHtml }}',\n    '{{ $json.suggestedAction }}');",
+        "options": {}
+      },
+      "id": "pg_queue_followup",
+      "name": "Queue Follow-Up Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2150,
+        -100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT transition_application_state(\n    '{{ $json.id }}'::uuid,\n    'ghosted',\n    'ghosting_detected',\n    'wf4_ghost',\n    '{\"days_waited\": {{ $json.daysInState }}, \"follow_ups_sent\": {{ $json.follow_up_count }}}'::jsonb,\n    'Automatically detected as ghosted after {{ $json.daysInState }} days with no response'\n);",
+        "options": {}
+      },
+      "id": "pg_ghost_transition",
+      "name": "Transition to Ghosted",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1400,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_queue (tenant_id, application_id, notification_type, priority, subject, body_html, body_text) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.id }}',\n    'ghosting_detected',\n    'medium',\n    'Ghosted: {{ $json.job_title }} at {{ $json.company_name }}',\n    '<h3>Application Marked as Ghosted</h3><p><strong>{{ $json.job_title }}</strong> at <strong>{{ $json.company_name }}</strong></p><p>After {{ $json.daysInState }} days with no response and {{ $json.follow_up_count }} follow-up(s) sent, this application has been automatically marked as ghosted.</p><p>Pipeline track: {{ $json.pipeline_track }}</p>',\n    'Application to {{ $json.company_name }} for {{ $json.job_title }} marked as ghosted after {{ $json.daysInState }} days.'\n);",
+        "options": {}
+      },
+      "id": "pg_queue_ghost",
+      "name": "Queue Ghosting Notification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1650,
+        100
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT a.id, a.company_name, a.job_title, a.current_state, j.expires_at,\n       EXTRACT(EPOCH FROM (j.expires_at - NOW())) / 3600 AS hours_until_deadline\nFROM applications a\nJOIN jobs j ON a.job_id = j.id\nWHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND a.current_state IN ('discovered', 'shortlisted', 'cv_tailored')\n  AND j.expires_at BETWEEN NOW() AND NOW() + INTERVAL '48 hours'\n  AND j.expires_at > NOW();",
+        "options": {}
+      },
+      "id": "pg_deadlines",
+      "name": "Check Approaching Deadlines",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        650,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nconst results = [];\nfor (const item of items) {\n    const a = item.json;\n    if (!a.id) continue;\n    const hours = Math.round(parseFloat(a.hours_until_deadline) || 0);\n    results.push({ json: {\n        tenant_id: tenantId,\n        ...a,\n        hours_remaining: hours,\n        subject: `DEADLINE: ${a.job_title} at ${a.company_name} expires in ${hours} hours`,\n        bodyHtml: `<h3>Application Deadline Approaching</h3><p><strong>${a.job_title}</strong> at <strong>${a.company_name}</strong></p><p>Deadline in <strong>${hours} hours</strong>.</p><p>Current status: ${a.current_state}. Apply now or mark as expired.</p>`\n    }});\n}\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+      },
+      "id": "code_deadline",
+      "name": "Format Deadline Alerts",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        900,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notTrue"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "if_deadline",
+      "name": "Has Deadlines?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1150,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO notification_queue (tenant_id, application_id, notification_type, priority, subject, body_html, body_text) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.id }}',\n    'deadline_approaching',\n    'critical',\n    '{{ $json.subject }}',\n    '{{ $json.bodyHtml }}',\n    'Deadline for {{ $json.job_title }} at {{ $json.company_name }} in {{ $json.hours_remaining }} hours.');",
+        "options": {}
+      },
+      "id": "pg_queue_deadline",
+      "name": "Queue Deadline Alert",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1400,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 6 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Applications": {
+      "main": [
+        [
+          {
+            "node": "Evaluate Follow-Up Status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Evaluate Follow-Up Status": {
+      "main": [
+        [
+          {
+            "node": "Switch Action",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch Action": {
+      "main": [
+        [
+          {
+            "node": "Generate Follow-Up Template",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Transition to Ghosted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Generate Follow-Up Template": {
+      "main": [
+        [
+          {
+            "node": "Insert Follow-Up Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Insert Follow-Up Log": {
+      "main": [
+        [
+          {
+            "node": "Update Follow-Up Count",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Update Follow-Up Count": {
+      "main": [
+        [
+          {
+            "node": "Queue Follow-Up Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Transition to Ghosted": {
+      "main": [
+        [
+          {
+            "node": "Queue Ghosting Notification",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Approaching Deadlines": {
+      "main": [
+        [
+          {
+            "node": "Format Deadline Alerts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Deadline Alerts": {
+      "main": [
+        [
+          {
+            "node": "Has Deadlines?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Deadlines?": {
+      "main": [
+        [
+          {
+            "node": "Queue Deadline Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Fetch Active Applications",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Follow-Up Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Ghosting Notification": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Queue Deadline Alert": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 6 Hours": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "2d03dec3-6495-4d83-85fb-af74f7725733",
+  "activeVersionId": "2d03dec3-6495-4d83-85fb-af74f7725733",
+  "versionCounter": 5,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:20:27.976Z",
+      "createdAt": "2026-04-02T17:20:27.976Z",
+      "role": "workflow:owner",
+      "workflowId": "RjELbd8jHpE0mYLy",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:20:27.983Z",
+    "createdAt": "2026-04-02T17:20:27.983Z",
+    "versionId": "2d03dec3-6495-4d83-85fb-af74f7725733",
+    "workflowId": "RjELbd8jHpE0mYLy",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 8,14,20 * * *"
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Every 6 Hours",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT a.id, a.company_name, a.job_title, a.pipeline_track, a.current_state,\n       EXTRACT(EPOCH FROM (NOW() - a.state_changed_at)) / 86400 AS days_in_state,\n       EXTRACT(EPOCH FROM (NOW() - a.applied_at)) / 86400 AS days_since_applied,\n       a.follow_up_count,\n       a.last_follow_up_at,\n       a.follow_up_snoozed_until,\n       a.applied_at,\n       a.state_changed_at,\n       a.reference_number\nFROM applications a\nWHERE a.is_active = true\n  AND a.current_state IN ('applied', 'acknowledged', 'screening', 'interviewing', 'academic_longlisted', 'academic_shortlisted')\n  AND (a.follow_up_snoozed_until IS NULL OR a.follow_up_snoozed_until < NOW())\nORDER BY a.state_changed_at ASC;",
+          "options": {}
+        },
+        "id": "pg_fetch",
+        "name": "Fetch Active Applications",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const apps = $input.all();\nconst results = [];\n\nfor (const app of apps) {\n    const a = app.json;\n    const track = a.pipeline_track;\n    const state = a.current_state;\n    const daysInState = parseFloat(a.days_in_state) || 0;\n    const followUps = a.follow_up_count || 0;\n\n    const thresholds = {\n        corporate: {\n            applied: { warn: 7, ghost: 14, maxFollowups: 2 },\n            acknowledged: { warn: 10, ghost: 21, maxFollowups: 1 },\n            screening: { warn: 7, ghost: 14, maxFollowups: 1 },\n            interviewing: { warn: 7, ghost: 14, maxFollowups: 1 },\n        },\n        academic: {\n            applied: { warn: 21, ghost: 56, maxFollowups: 1 },\n            acknowledged: { warn: 28, ghost: 56, maxFollowups: 1 },\n            academic_longlisted: { warn: 28, ghost: 56, maxFollowups: 1 },\n            academic_shortlisted: { warn: 21, ghost: 42, maxFollowups: 1 },\n            screening: { warn: 14, ghost: 28, maxFollowups: 1 },\n            interviewing: { warn: 21, ghost: 42, maxFollowups: 1 },\n        }\n    };\n\n    const t = ((thresholds[track] || thresholds.corporate)[state]);\n    if (!t) {\n        results.push({ json: { ...a, action: 'ok' } });\n        continue;\n    }\n\n    let action = 'ok';\n    if (daysInState >= t.ghost && followUps >= t.maxFollowups) {\n        action = 'ghosted';\n    } else if (daysInState >= t.warn && followUps < t.maxFollowups) {\n        action = 'follow_up_due';\n    }\n\n    const reminderType = followUps === 0 ? 'initial_follow_up' : 'second_follow_up';\n\n    results.push({ json: { ...a, action, thresholdDays: t.warn, ghostDays: t.ghost, reminderType, daysInState: Math.round(daysInState) } });\n}\n\nreturn results;"
+        },
+        "id": "code_eval",
+        "name": "Evaluate Follow-Up Status",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "rules": {
+            "values": [
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "follow_up_due",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "follow_up_due"
+              },
+              {
+                "conditions": {
+                  "options": {
+                    "caseSensitive": true,
+                    "leftValue": "",
+                    "typeValidation": "strict"
+                  },
+                  "conditions": [
+                    {
+                      "leftValue": "={{ $json.action }}",
+                      "rightValue": "ghosted",
+                      "operator": {
+                        "type": "string",
+                        "operation": "equals"
+                      }
+                    }
+                  ],
+                  "combinator": "and"
+                },
+                "renameOutput": true,
+                "outputKey": "ghosted"
+              }
+            ]
+          },
+          "options": {
+            "allMatchingOutputs": false,
+            "fallbackOutput": "extra"
+          }
+        },
+        "id": "switch_action",
+        "name": "Switch Action",
+        "type": "n8n-nodes-base.switch",
+        "typeVersion": 3.2,
+        "position": [
+          750,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const a = $input.first().json;\nconst company = a.company_name;\nconst title = a.job_title;\nconst days = a.daysInState;\nconst track = a.pipeline_track;\nconst state = a.current_state;\nconst ref = a.reference_number ? ` (Ref: ${a.reference_number})` : '';\n\nlet suggestedAction = '';\nlet template = '';\n\nif (track === 'academic') {\n    suggestedAction = `Check university HR portal for status update. Academic hiring timelines are longer \u2014 ${days} days is approaching the follow-up threshold.`;\n    template = `Dear Hiring Committee,\\n\\nI submitted my application for the ${title} position${ref} and wanted to confirm it was received. I remain very interested in this opportunity and would welcome any update on the timeline.\\n\\nKind regards,\\nSelvi`;\n} else {\n    suggestedAction = `Send a polite follow-up email to ${company}. You applied ${days} days ago with no response.`;\n    template = `Dear Hiring Manager,\\n\\nI applied for the ${title} role${ref} at ${company} and wanted to follow up. I'm very interested in this opportunity and would appreciate any update on the status of my application.\\n\\nBest regards,\\nSelvi`;\n}\n\nconst subject = `Follow-up needed: ${title} at ${company} (${days} days)`;\nconst bodyHtml = `<h3>Follow-Up Reminder</h3><p><strong>${title}</strong> at <strong>${company}</strong></p><p>You applied ${days} days ago (${track} track, state: ${state}).</p><p><strong>Suggested action:</strong> ${suggestedAction}</p><h4>Suggested follow-up email:</h4><pre>${template}</pre>`;\n\nreturn [{ json: { ...a, subject, bodyHtml, suggestedAction, template } }];"
+        },
+        "id": "code_followup",
+        "name": "Generate Follow-Up Template",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1000,
+          -100
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO follow_up_log (application_id, reminder_type, suggested_action, follow_up_template, sent_at)\nVALUES ('{{ $json.id }}', '{{ $json.reminderType }}', '{{ $json.suggestedAction }}', '{{ $json.template }}', NOW());",
+          "options": {}
+        },
+        "id": "pg_followup_log",
+        "name": "Insert Follow-Up Log",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1250,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "UPDATE applications SET\n    follow_up_count = follow_up_count + 1,\n    last_follow_up_at = NOW(),\n    next_follow_up_at = NOW() + INTERVAL '7 days'\nWHERE id = '{{ $json.id }}';",
+          "options": {}
+        },
+        "id": "pg_update_followup",
+        "name": "Update Follow-Up Count",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1500,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_queue (application_id, notification_type, priority, subject, body_html, body_text)\nVALUES (\n    '{{ $json.id }}',\n    'follow_up_reminder',\n    'high',\n    '{{ $json.subject }}',\n    '{{ $json.bodyHtml }}',\n    '{{ $json.suggestedAction }}'\n);",
+          "options": {}
+        },
+        "id": "pg_queue_followup",
+        "name": "Queue Follow-Up Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1750,
+          -100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT transition_application_state(\n    '{{ $json.id }}'::uuid,\n    'ghosted',\n    'ghosting_detected',\n    'wf4_ghost',\n    '{\"days_waited\": {{ $json.daysInState }}, \"follow_ups_sent\": {{ $json.follow_up_count }}}'::jsonb,\n    'Automatically detected as ghosted after {{ $json.daysInState }} days with no response'\n);",
+          "options": {}
+        },
+        "id": "pg_ghost_transition",
+        "name": "Transition to Ghosted",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1000,
+          100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_queue (application_id, notification_type, priority, subject, body_html, body_text)\nVALUES (\n    '{{ $json.id }}',\n    'ghosting_detected',\n    'medium',\n    'Ghosted: {{ $json.job_title }} at {{ $json.company_name }}',\n    '<h3>Application Marked as Ghosted</h3><p><strong>{{ $json.job_title }}</strong> at <strong>{{ $json.company_name }}</strong></p><p>After {{ $json.daysInState }} days with no response and {{ $json.follow_up_count }} follow-up(s) sent, this application has been automatically marked as ghosted.</p><p>Pipeline track: {{ $json.pipeline_track }}</p>',\n    'Application to {{ $json.company_name }} for {{ $json.job_title }} marked as ghosted after {{ $json.daysInState }} days.'\n);",
+          "options": {}
+        },
+        "id": "pg_queue_ghost",
+        "name": "Queue Ghosting Notification",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1250,
+          100
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT a.id, a.company_name, a.job_title, a.current_state, j.expires_at,\n       EXTRACT(EPOCH FROM (j.expires_at - NOW())) / 3600 AS hours_until_deadline\nFROM applications a\nJOIN jobs j ON a.job_id = j.id\nWHERE a.current_state IN ('discovered', 'shortlisted', 'cv_tailored')\n  AND j.expires_at BETWEEN NOW() AND NOW() + INTERVAL '48 hours'\n  AND j.expires_at > NOW();",
+          "options": {}
+        },
+        "id": "pg_deadlines",
+        "name": "Check Approaching Deadlines",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const items = $input.all();\nconst results = [];\nfor (const item of items) {\n    const a = item.json;\n    if (!a.id) continue;\n    const hours = Math.round(parseFloat(a.hours_until_deadline) || 0);\n    results.push({ json: {\n        ...a,\n        hours_remaining: hours,\n        subject: `DEADLINE: ${a.job_title} at ${a.company_name} expires in ${hours} hours`,\n        bodyHtml: `<h3>Application Deadline Approaching</h3><p><strong>${a.job_title}</strong> at <strong>${a.company_name}</strong></p><p>Deadline in <strong>${hours} hours</strong>.</p><p>Current status: ${a.current_state}. Apply now or mark as expired.</p>`\n    }});\n}\nreturn results.length > 0 ? results : [{ json: { skip: true } }];"
+        },
+        "id": "code_deadline",
+        "name": "Format Deadline Alerts",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "notTrue"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "if_deadline",
+        "name": "Has Deadlines?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          750,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO notification_queue (application_id, notification_type, priority, subject, body_html, body_text)\nVALUES (\n    '{{ $json.id }}',\n    'deadline_approaching',\n    'critical',\n    '{{ $json.subject }}',\n    '{{ $json.bodyHtml }}',\n    'Deadline for {{ $json.job_title }} at {{ $json.company_name }} in {{ $json.hours_remaining }} hours.'\n);",
+          "options": {}
+        },
+        "id": "pg_queue_deadline",
+        "name": "Queue Deadline Alert",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1000,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 6 Hours": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Applications",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Check Approaching Deadlines",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Applications": {
+        "main": [
+          [
+            {
+              "node": "Evaluate Follow-Up Status",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Evaluate Follow-Up Status": {
+        "main": [
+          [
+            {
+              "node": "Switch Action",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Switch Action": {
+        "main": [
+          [
+            {
+              "node": "Generate Follow-Up Template",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Transition to Ghosted",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      },
+      "Generate Follow-Up Template": {
+        "main": [
+          [
+            {
+              "node": "Insert Follow-Up Log",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Insert Follow-Up Log": {
+        "main": [
+          [
+            {
+              "node": "Update Follow-Up Count",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Update Follow-Up Count": {
+        "main": [
+          [
+            {
+              "node": "Queue Follow-Up Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Transition to Ghosted": {
+        "main": [
+          [
+            {
+              "node": "Queue Ghosting Notification",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Approaching Deadlines": {
+        "main": [
+          [
+            {
+              "node": "Format Deadline Alerts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Deadline Alerts": {
+        "main": [
+          [
+            {
+              "node": "Has Deadlines?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Deadlines?": {
+        "main": [
+          [
+            {
+              "node": "Queue Deadline Alert",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          []
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:24:32.099Z",
+        "id": 55,
+        "workflowId": "RjELbd8jHpE0mYLy",
+        "versionId": "2d03dec3-6495-4d83-85fb-af74f7725733",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

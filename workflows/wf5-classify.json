@@ -1,0 +1,365 @@
+{
+  "name": "WF5-CLASSIFY: Email Classification (M5)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 5 }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "wf5c-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_locks (workflow_name, locked_by, expires_at)\nVALUES ('WF5-CLASSIFY', '{{ $executionId }}', NOW() + INTERVAL '10 minutes')\nON CONFLICT (workflow_name)\nDO UPDATE SET locked_at = NOW(), locked_by = '{{ $executionId }}', expires_at = NOW() + INTERVAL '10 minutes'\nWHERE workflow_locks.expires_at < NOW()\nRETURNING workflow_name;",
+        "options": {}
+      },
+      "name": "Acquire Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-lock"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "lock-check",
+              "leftValue": "={{ $json.workflow_name }}",
+              "rightValue": "WF5-CLASSIFY",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [440, 0],
+      "id": "wf5c-if-lock"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT e.id, e.gmail_message_id, e.subject, e.from_email, e.from_name,\n       e.body_stripped, e.snippet, e.has_attachments, e.has_ics_attachment,\n       e.is_reply, e.gmail_thread_id,\n       sp.classification AS sender_class, sp.confidence AS sender_confidence,\n       sp.source_name AS sender_source\nFROM emails e\nLEFT JOIN email_sender_patterns sp ON (\n    (sp.pattern_type = 'exact' AND e.from_email = sp.pattern)\n    OR (sp.pattern_type = 'domain' AND e.from_email LIKE '%' || REPLACE(REPLACE(sp.pattern, '*@', ''), '*', '%') || '%')\n) AND sp.enabled = true\nWHERE e.status = 'ingested'\nORDER BY\n    CASE WHEN sp.classification = 'job_alert' THEN 1 ELSE 0 END ASC,\n    e.date ASC\nLIMIT 20;",
+        "options": {}
+      },
+      "name": "Get Unclassified Emails",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, -100],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-get-emails"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-emails",
+              "leftValue": "={{ $json.id }}",
+              "rightValue": "",
+              "operator": { "type": "string", "operation": "notEmpty" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Emails Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, -100],
+      "id": "wf5c-if-emails"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine classification method for each email\nconst items = $input.all();\nconst results = [];\n\nfor (const item of items) {\n  const email = item.json;\n  let method = 'claude_haiku'; // default\n  let skipAI = false;\n  let classification = null;\n  let confidence = 0;\n  let senderType = 'unknown';\n  let isUrgent = false;\n  let isAutomated = false;\n\n  // Fast path: sender pattern match with high confidence\n  if (email.sender_class && parseFloat(email.sender_confidence) >= 0.9) {\n    method = 'sender_pattern';\n    classification = email.sender_class;\n    confidence = parseFloat(email.sender_confidence);\n    skipAI = true;\n    isAutomated = true;\n\n    // Determine sender type from classification\n    if (['job_alert', 'marketing'].includes(classification)) senderType = 'job_board';\n    else if (classification === 'recruiter_outreach') senderType = 'recruiter';\n    else if (classification === 'not_job_related') senderType = 'unknown';\n  }\n\n  // Subject heuristic check for non-pattern-matched emails\n  if (!skipAI) {\n    const subject = (email.subject || '').toLowerCase();\n\n    // Interview invitation patterns\n    if (subject.match(/interview\\s+(invitation|invite|request|schedule|confirmation)/i) ||\n        subject.match(/invit(e|ation)\\s+to\\s+interview/i)) {\n      classification = 'interview_invite';\n      confidence = 0.88;\n      method = 'subject_heuristic';\n      isUrgent = true;\n      skipAI = true;\n    }\n    // Rejection patterns\n    else if (subject.match(/unfortunately|unsuccessful|not been selected|regret to inform/i) ||\n             subject.match(/your application.*(?:update|status)/i) && subject.match(/unable|not|regret/i)) {\n      classification = 'rejection';\n      confidence = 0.86;\n      method = 'subject_heuristic';\n      skipAI = true;\n    }\n    // Offer patterns\n    else if (subject.match(/offer of employment|job offer|offer letter|conditional offer/i)) {\n      classification = 'offer';\n      confidence = 0.85;\n      method = 'subject_heuristic';\n      isUrgent = true;\n      // Still send to Claude for confirmation since offers are high-stakes\n      skipAI = false;\n    }\n  }\n\n  results.push({\n    json: {\n      ...email,\n      classification_method: method,\n      skip_ai: skipAI,\n      preliminary_classification: classification,\n      preliminary_confidence: confidence,\n      sender_type: senderType,\n      is_urgent: isUrgent,\n      is_automated: isAutomated\n    }\n  });\n}\n\nreturn results;"
+      },
+      "name": "Classify: Triage",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1100, -200],
+      "id": "wf5c-triage"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "skip-ai",
+              "leftValue": "={{ $json.skip_ai }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Skip AI?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1320, -200],
+      "id": "wf5c-if-skipai"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\nINSERT INTO email_classifications (\n    email_id, classification, confidence, rationale,\n    is_urgent, is_automated, sender_type,\n    classification_method, classified_at\n) VALUES (\n    '{{ $json.id }}'::uuid,\n    '{{ $json.preliminary_classification }}',\n    {{ $json.preliminary_confidence }},\n    'Classified via {{ $json.classification_method }}: {{ $json.sender_source || $json.classification_method }}',\n    {{ $json.is_urgent }},\n    {{ $json.is_automated }},\n    '{{ $json.sender_type }}',\n    '{{ $json.classification_method }}',\n    NOW()\n)\nON CONFLICT (email_id) DO NOTHING;\n\nUPDATE emails SET\n    status = 'classified',\n    classified_at = NOW(),\n    is_job_related = {{ $json.preliminary_classification !== 'not_job_related' && $json.preliminary_classification !== 'marketing' }}\nWHERE id = '{{ $json.id }}'::uuid;\nCOMMIT;",
+        "options": { "queryBatching": "transaction" }
+      },
+      "name": "Save Pattern Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [1540, -300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-save-pattern"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY || '' }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-3-5-haiku-20241022\",\n  \"max_tokens\": 500,\n  \"system\": \"You are an email classification engine for a UK job seeker (L&D / Training professional). Classify the email into exactly one category and return ONLY valid JSON.\\n\\nCategories:\\n- acknowledgment: Application received confirmation from employer/ATS\\n- rejection: Application rejected at any stage\\n- interview_invite: Interview invitation, scheduling request, or interview-related communication\\n- recruiter_outreach: Recruitment agency or recruiter reaching out about a role\\n- job_alert: Job listing digest/alert from a job board\\n- offer: Job offer or offer-related communication\\n- follow_up_request: Employer/recruiter requesting documents, references, or action\\n- marketing: Job board marketing, newsletters, promotions\\n- not_job_related: Not related to job searching\\n\\nReturn JSON: {\\\"classification\\\": \\\"<category>\\\", \\\"confidence\\\": <0.0-1.0>, \\\"is_urgent\\\": <boolean>, \\\"is_automated\\\": <boolean>, \\\"sender_type\\\": \\\"<employer|recruiter|job_board|ats|personal_contact|unknown>\\\", \\\"rationale\\\": \\\"<brief explanation>\\\"}\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Classify this email:\\n\\nFrom: {{ $json.from_email }} ({{ $json.from_name || 'unknown' }})\\nSubject: {{ $json.subject }}\\nSnippet: {{ ($json.snippet || '').substring(0, 300) }}\\n\\nBody (first 2000 chars):\\n{{ ($json.body_stripped || $json.snippet || '').substring(0, 2000) }}\"\n  }]\n}",
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "name": "Claude Haiku: Classify",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1540, -100],
+      "id": "wf5c-haiku",
+      "onError": "continueRegularOutput",
+      "notes": "Uses Anthropic API directly. Ensure ANTHROPIC_API_KEY env var is set in n8n."
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude Haiku classification response\nconst input = $input.first().json;\nconst emailData = $('Classify: Triage').item.json;\n\nlet classification = 'not_job_related';\nlet confidence = 0.5;\nlet isUrgent = false;\nlet isAutomated = false;\nlet senderType = 'unknown';\nlet rationale = 'Parse error';\nlet inputTokens = 0;\nlet outputTokens = 0;\nlet needsEscalation = false;\n\ntry {\n  // Handle API error\n  if (input.statusCode && input.statusCode !== 200) {\n    throw new Error(`Claude API returned ${input.statusCode}`);\n  }\n\n  const body = input.body || input;\n  inputTokens = body.usage?.input_tokens || 0;\n  outputTokens = body.usage?.output_tokens || 0;\n\n  // Extract text content from Claude response\n  const content = body.content?.[0]?.text || '';\n\n  // Parse JSON from response (handle markdown code blocks)\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    classification = parsed.classification || 'not_job_related';\n    confidence = parseFloat(parsed.confidence) || 0.5;\n    isUrgent = parsed.is_urgent || false;\n    isAutomated = parsed.is_automated || false;\n    senderType = parsed.sender_type || 'unknown';\n    rationale = parsed.rationale || '';\n  }\n\n  // Safety escalation check\n  // Escalate offers to Sonnet for confirmation\n  if (classification === 'offer') {\n    needsEscalation = true;\n  }\n  // Low confidence -> escalate\n  if (confidence < 0.80) {\n    needsEscalation = true;\n  }\n  // Check for contextual offer phrases that Haiku might have missed\n  const bodyText = (emailData.body_stripped || '').toLowerCase();\n  const offerPhrases = [\n    \"we'd like to offer you\",\n    \"offer of employment\",\n    \"pleased to offer\",\n    \"your offer letter\",\n    \"annual salary of\"\n  ];\n  if (classification !== 'offer' && offerPhrases.some(p => bodyText.includes(p))) {\n    needsEscalation = true;\n  }\n} catch (err) {\n  rationale = `Classification error: ${err.message}`;\n  needsEscalation = false; // Don't escalate on API errors\n}\n\n// Estimate cost (Haiku: ~$0.25/M input, ~$1.25/M output)\nconst costUsd = (inputTokens * 0.25 / 1000000) + (outputTokens * 1.25 / 1000000);\n\nreturn [{\n  json: {\n    email_id: emailData.id,\n    email_subject: emailData.subject,\n    email_from: emailData.from_email,\n    gmail_thread_id: emailData.gmail_thread_id,\n    body_stripped: emailData.body_stripped,\n    snippet: emailData.snippet,\n    classification,\n    confidence,\n    is_urgent: isUrgent,\n    is_automated: isAutomated,\n    sender_type: senderType,\n    rationale,\n    input_tokens: inputTokens,\n    output_tokens: outputTokens,\n    cost_usd: costUsd,\n    needs_escalation: needsEscalation,\n    haiku_classification: classification,\n    haiku_confidence: confidence\n  }\n}];"
+      },
+      "name": "Parse Haiku Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -100],
+      "id": "wf5c-parse-haiku"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "needs-escalation",
+              "leftValue": "={{ $json.needs_escalation }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Needs Escalation?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1980, -100],
+      "id": "wf5c-if-escalate"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\nINSERT INTO email_classifications (\n    email_id, classification, confidence, rationale,\n    is_urgent, is_automated, sender_type,\n    classification_method, model_version,\n    input_tokens, output_tokens, cost_usd,\n    classified_at\n) VALUES (\n    '{{ $json.email_id }}'::uuid,\n    '{{ $json.classification }}',\n    {{ $json.confidence }},\n    '{{ ($json.rationale || '').replace(/'/g, \"''\").substring(0, 500) }}',\n    {{ $json.is_urgent }},\n    {{ $json.is_automated }},\n    '{{ $json.sender_type }}',\n    'claude_haiku',\n    'claude-3-5-haiku-20241022',\n    {{ $json.input_tokens }},\n    {{ $json.output_tokens }},\n    {{ $json.cost_usd }},\n    NOW()\n)\nON CONFLICT (email_id) DO NOTHING;\n\nUPDATE emails SET\n    status = 'classified',\n    classified_at = NOW(),\n    is_job_related = {{ $json.classification !== 'not_job_related' && $json.classification !== 'marketing' }}\nWHERE id = '{{ $json.email_id }}'::uuid;\nCOMMIT;",
+        "options": { "queryBatching": "transaction" }
+      },
+      "name": "Save Haiku Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2200, -200],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-save-haiku"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            { "name": "x-api-key", "value": "={{ $env.ANTHROPIC_API_KEY || '' }}" },
+            { "name": "anthropic-version", "value": "2023-06-01" },
+            { "name": "content-type", "value": "application/json" }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 800,\n  \"system\": \"You are a senior email classification engine for a UK job seeker. A lower-tier model flagged this email for review (either low confidence or possible offer/high-stakes classification). Re-classify carefully.\\n\\nPrevious classification: {{ $json.haiku_classification }} (confidence: {{ $json.haiku_confidence }})\\n\\nCategories: acknowledgment, rejection, interview_invite, recruiter_outreach, job_alert, offer, follow_up_request, marketing, not_job_related\\n\\nReturn JSON: {\\\"classification\\\": \\\"<category>\\\", \\\"confidence\\\": <0.0-1.0>, \\\"is_urgent\\\": <boolean>, \\\"is_automated\\\": <boolean>, \\\"sender_type\\\": \\\"<employer|recruiter|job_board|ats|personal_contact|unknown>\\\", \\\"rationale\\\": \\\"<detailed explanation>\\\"}\",\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Re-classify this email (escalated from Haiku due to low confidence or safety check):\\n\\nFrom: {{ $json.email_from }}\\nSubject: {{ $json.email_subject }}\\n\\nBody (first 3000 chars):\\n{{ ($json.body_stripped || $json.snippet || '').substring(0, 3000) }}\"\n  }]\n}",
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "name": "Claude Sonnet: Escalate",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2200, 0],
+      "id": "wf5c-sonnet",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Sonnet escalation response\nconst input = $input.first().json;\nconst prevData = $('Parse Haiku Response').item.json;\n\nlet classification = prevData.haiku_classification;\nlet confidence = prevData.haiku_confidence;\nlet isUrgent = prevData.is_urgent;\nlet isAutomated = prevData.is_automated;\nlet senderType = prevData.sender_type;\nlet rationale = 'Sonnet escalation parse error, using Haiku result';\nlet inputTokens = 0;\nlet outputTokens = 0;\n\ntry {\n  const body = input.body || input;\n  inputTokens = body.usage?.input_tokens || 0;\n  outputTokens = body.usage?.output_tokens || 0;\n\n  const content = body.content?.[0]?.text || '';\n  const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n  if (jsonMatch) {\n    const parsed = JSON.parse(jsonMatch[0]);\n    classification = parsed.classification || classification;\n    confidence = parseFloat(parsed.confidence) || confidence;\n    isUrgent = parsed.is_urgent ?? isUrgent;\n    isAutomated = parsed.is_automated ?? isAutomated;\n    senderType = parsed.sender_type || senderType;\n    rationale = parsed.rationale || '';\n  }\n} catch (err) {\n  rationale = `Sonnet parse error: ${err.message}. Falling back to Haiku: ${prevData.haiku_classification}`;\n}\n\nconst costUsd = (inputTokens * 3.0 / 1000000) + (outputTokens * 15.0 / 1000000);\nconst needsReview = confidence < 0.60;\n\nreturn [{\n  json: {\n    email_id: prevData.email_id,\n    classification,\n    confidence,\n    is_urgent: isUrgent,\n    is_automated: isAutomated,\n    sender_type: senderType,\n    rationale,\n    input_tokens: inputTokens + (prevData.input_tokens || 0),\n    output_tokens: outputTokens + (prevData.output_tokens || 0),\n    cost_usd: costUsd + (prevData.cost_usd || 0),\n    was_escalated: true,\n    haiku_classification: prevData.haiku_classification,\n    haiku_confidence: prevData.haiku_confidence,\n    needs_review: needsReview\n  }\n}];"
+      },
+      "name": "Parse Sonnet Response",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2420, 0],
+      "id": "wf5c-parse-sonnet"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "BEGIN;\nINSERT INTO email_classifications (\n    email_id, classification, confidence, rationale,\n    is_urgent, is_automated, sender_type,\n    classification_method, model_version,\n    was_escalated, haiku_classification, haiku_confidence,\n    manually_reviewed,\n    input_tokens, output_tokens, cost_usd,\n    classified_at\n) VALUES (\n    '{{ $json.email_id }}'::uuid,\n    '{{ $json.classification }}',\n    {{ $json.confidence }},\n    '{{ ($json.rationale || '').replace(/'/g, \"''\").substring(0, 500) }}',\n    {{ $json.is_urgent }},\n    {{ $json.is_automated }},\n    '{{ $json.sender_type }}',\n    'claude_sonnet',\n    'claude-sonnet-4-20250514',\n    true,\n    '{{ $json.haiku_classification }}',\n    {{ $json.haiku_confidence }},\n    false,\n    {{ $json.input_tokens }},\n    {{ $json.output_tokens }},\n    {{ $json.cost_usd }},\n    NOW()\n)\nON CONFLICT (email_id) DO NOTHING;\n\nUPDATE emails SET\n    status = 'classified',\n    classified_at = NOW(),\n    is_job_related = {{ $json.classification !== 'not_job_related' && $json.classification !== 'marketing' }},\n    needs_review = {{ $json.needs_review || false }}\nWHERE id = '{{ $json.email_id }}'::uuid;\nCOMMIT;",
+        "options": { "queryBatching": "transaction" }
+      },
+      "name": "Save Sonnet Classification",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2640, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-save-sonnet"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM workflow_locks WHERE workflow_name = 'WF5-CLASSIFY';",
+        "options": {}
+      },
+      "name": "Release Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2860, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-release"
+    },
+    {
+      "parameters": {},
+      "name": "No Emails",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1100, 0],
+      "id": "wf5c-noop"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_processing_log (workflow_name, step, status, details)\nVALUES ('WF5-CLASSIFY', 'skipped', 'skipped', '{\"reason\": \"lock not acquired\"}'::jsonb);",
+        "options": {}
+      },
+      "name": "Log Lock Skip",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, 100],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5c-log-skip"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Acquire Lock", "type": "main", "index": 0}]]
+    },
+    "Acquire Lock": {
+      "main": [[{"node": "Lock Acquired?", "type": "main", "index": 0}]]
+    },
+    "Lock Acquired?": {
+      "main": [
+        [{"node": "Get Unclassified Emails", "type": "main", "index": 0}],
+        [{"node": "Log Lock Skip", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Unclassified Emails": {
+      "main": [[{"node": "Emails Found?", "type": "main", "index": 0}]]
+    },
+    "Emails Found?": {
+      "main": [
+        [{"node": "Classify: Triage", "type": "main", "index": 0}],
+        [{"node": "No Emails", "type": "main", "index": 0}]
+      ]
+    },
+    "Classify: Triage": {
+      "main": [[{"node": "Skip AI?", "type": "main", "index": 0}]]
+    },
+    "Skip AI?": {
+      "main": [
+        [{"node": "Save Pattern Classification", "type": "main", "index": 0}],
+        [{"node": "Claude Haiku: Classify", "type": "main", "index": 0}]
+      ]
+    },
+    "Save Pattern Classification": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    },
+    "Claude Haiku: Classify": {
+      "main": [[{"node": "Parse Haiku Response", "type": "main", "index": 0}]]
+    },
+    "Parse Haiku Response": {
+      "main": [[{"node": "Needs Escalation?", "type": "main", "index": 0}]]
+    },
+    "Needs Escalation?": {
+      "main": [
+        [{"node": "Claude Sonnet: Escalate", "type": "main", "index": 0}],
+        [{"node": "Save Haiku Classification", "type": "main", "index": 0}]
+      ]
+    },
+    "Save Haiku Classification": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    },
+    "Claude Sonnet: Escalate": {
+      "main": [[{"node": "Parse Sonnet Response", "type": "main", "index": 0}]]
+    },
+    "Parse Sonnet Response": {
+      "main": [[{"node": "Save Sonnet Classification", "type": "main", "index": 0}]]
+    },
+    "Save Sonnet Classification": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    },
+    "No Emails": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London"
+  }
+}

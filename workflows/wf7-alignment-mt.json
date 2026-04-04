@@ -1,0 +1,1071 @@
+{
+  "updatedAt": "2026-04-04T21:23:38.149Z",
+  "createdAt": "2026-04-02T17:21:22.592Z",
+  "id": "htUY822cvSHeY6EW",
+  "name": "WF7-ALIGNMENT: Profile-CV Alignment Check",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 9 * * 3"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Wednesday 9AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT profile_section, section_data, version, last_updated FROM linkedin_profile WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND profile_section IN ('experience', 'education', 'certifications', 'skills', 'headline', 'about') ORDER BY profile_section, version DESC",
+        "options": {}
+      },
+      "id": "loadProfile",
+      "name": "Load LinkedIn Profile",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cv_identifier, cv_target_role, cv_data, created_at FROM (SELECT 'latest_cv' as cv_identifier, 'general' as cv_target_role, '{}'::jsonb as cv_data, NOW() as created_at) fallback LIMIT 3",
+        "options": {}
+      },
+      "id": "loadCVs",
+      "name": "Load Recent CVs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather profile data and CV data\nconst profileRows = $('Load LinkedIn Profile').all().map(i => i.json);\nconst cvRows = $('Load Recent CVs').all().map(i => i.json);\n\n// Build profile object from sections\nconst profile = {};\nfor (const row of profileRows) {\n  if (!profile[row.profile_section] || row.version > (profile[row.profile_section].version || 0)) {\n    profile[row.profile_section] = {\n      data: row.section_data,\n      version: row.version,\n      last_updated: row.last_updated\n    };\n  }\n}\n\nconst hasProfile = Object.keys(profile).length > 0;\nconst hasCVs = cvRows.length > 0 && cvRows[0].cv_identifier !== 'latest_cv';\n\n// If no profile data, skip comparison\nif (!hasProfile) {\n  return [{\n    json: {\n      skip: true,\n      reason: 'No LinkedIn profile data found. Please add profile data via the manual ingestion webhook first.',\n      profile: {},\n      cvs: []\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    profile: profile,\n    cvs: cvRows,\n    profile_sections: Object.keys(profile)\n  }\n}];"
+      },
+      "id": "checkData",
+      "name": "Check Data Available",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "skip-check",
+              "leftValue": "={{ $json.skip }}",
+              "rightValue": false,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "ifData",
+      "name": "Has Profile Data?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1060,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 3000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are an expert recruiter who checks LinkedIn profiles against CVs for consistency. Recruiters routinely check LinkedIn after receiving a CV. Discrepancies raise red flags.\\n\\nLINKEDIN PROFILE DATA:\\n\" + JSON.stringify($json.profile) + \"\\n\\nCV DATA (most recent tailored versions):\\n\" + JSON.stringify($json.cvs) + \"\\n\\nCompare the LinkedIn profile against the CV data. Check for:\\n1. CRITICAL: Different job dates, different job titles, missing roles, different companies\\n2. WARNING: Different responsibility descriptions, missing skills that CV claims, education discrepancies\\n3. INFO: Different emphasis/framing (acceptable), missing optional sections\\n\\nFor each discrepancy found, provide:\\n- field: which field differs (e.g. 'experience.acme_corp.dates')\\n- severity: 'critical', 'warning', or 'info'\\n- linkedin_value: what LinkedIn shows\\n- cv_value: what the CV shows\\n- recommendation: how to resolve\\n\\nAlso provide:\\n- overall_status: 'aligned' (no issues), 'minor_issues' (warnings only), or 'discrepancies_found' (any critical)\\n- analysis: 2-3 sentence summary of the alignment status\\n- resolution_recommendations: array of specific actions to take\\n\\nIf profile data is minimal or empty, note that the profile needs to be populated first.\\n\\nRespond ONLY with valid JSON: {\\\"discrepancies\\\": [...], \\\"overall_status\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"resolution_recommendations\\\": [...]}\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "claudeAnalyze",
+      "name": "Claude Analyze Alignment",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude's analysis\nconst response = $json;\nlet content = '';\nif (response.content && response.content[0]) {\n  content = response.content[0].text;\n}\n\nlet analysis = {};\ntry {\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    analysis = JSON.parse(match[0]);\n  }\n} catch (e) {\n  analysis = {\n    discrepancies: [],\n    overall_status: 'aligned',\n    analysis: 'Could not parse alignment analysis. Manual review recommended.',\n    resolution_recommendations: ['Run alignment check manually']\n  };\n}\n\nconst discrepancies = analysis.discrepancies || [];\nconst criticalCount = discrepancies.filter(d => d.severity === 'critical').length;\nconst warningCount = discrepancies.filter(d => d.severity === 'warning').length;\nconst infoCount = discrepancies.filter(d => d.severity === 'info').length;\n\n// Get CV info from upstream\nconst checkData = $('Check Data Available').first().json;\nconst cvIdentifier = (checkData.cvs && checkData.cvs[0]) ? checkData.cvs[0].cv_identifier : 'weekly_check';\nconst cvTargetRole = (checkData.cvs && checkData.cvs[0]) ? checkData.cvs[0].cv_target_role : 'general';\n\nreturn [{\n  json: {\n    cv_identifier: cvIdentifier,\n    cv_target_role: cvTargetRole,\n    discrepancies: JSON.stringify(discrepancies),\n    critical_count: criticalCount,\n    warning_count: warningCount,\n    info_count: infoCount,\n    overall_status: analysis.overall_status || 'aligned',\n    ai_analysis: analysis.analysis || '',\n    resolution_recommendations: JSON.stringify(analysis.resolution_recommendations || []),\n    has_critical: criticalCount > 0,\n    has_issues: criticalCount > 0 || warningCount > 0\n  }\n}];"
+      },
+      "id": "parseResults",
+      "name": "Parse Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO profile_cv_alignment (tenant_id, cv_identifier, cv_target_role, check_type, discrepancies, critical_count, warning_count, info_count, overall_status, ai_analysis, resolution_recommendations) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.cv_identifier }}', '{{ $json.cv_target_role }}', 'automatic', '{{ $json.discrepancies }}'::jsonb, {{ $json.critical_count }}, {{ $json.warning_count }}, {{ $json.info_count }}, '{{ $json.overall_status }}', '{{ $json.ai_analysis }}', '{{ $json.resolution_recommendations }}'::jsonb) RETURNING id",
+        "options": {}
+      },
+      "id": "storeResult",
+      "name": "Store Result",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "conditions": [
+            {
+              "id": "critical-check",
+              "leftValue": "={{ $('Parse Results').first().json.has_issues }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "ifCritical",
+      "name": "Has Issues?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const r = $('Parse Results').first().json;\n\nconst isCritical = r.critical_count > 0;\nconst urgency = isCritical ? 'URGENT' : 'Notice';\nconst color = isCritical ? '#e74c3c' : '#f39c12';\n\nlet discrepancies = [];\ntry { discrepancies = JSON.parse(r.discrepancies); } catch(e) {}\nlet recommendations = [];\ntry { recommendations = JSON.parse(r.resolution_recommendations); } catch(e) {}\n\nlet h = '<div style=\"font-family:Georgia,serif;max-width:600px;margin:0 auto;color:#333;\">';\nh += '<div style=\"background:' + color + ';color:white;padding:15px;border-radius:4px 4px 0 0;\">';\nh += '<h1 style=\"margin:0;font-size:20px;\">' + urgency + ': Profile-CV Alignment Issue</h1>';\nh += '<p style=\"margin:5px 0 0 0;font-size:14px;\">CV: ' + (r.cv_target_role || r.cv_identifier) + '</p></div>';\n\nh += '<div style=\"padding:15px;border:1px solid #ddd;border-top:0;\">';\nh += '<p><strong>Status:</strong> ' + r.overall_status.replace(/_/g, ' ') + '</p>';\nh += '<p><strong>Analysis:</strong> ' + (r.ai_analysis || 'No analysis available') + '</p>';\n\nh += '<p><strong>Issues found:</strong> ' + r.critical_count + ' critical, ' + r.warning_count + ' warnings, ' + r.info_count + ' info</p>';\n\nif (discrepancies.length > 0) {\n  h += '<h3 style=\"color:#1a5276;\">Discrepancies</h3>';\n  for (const d of discrepancies) {\n    const dColor = d.severity === 'critical' ? '#e74c3c' : d.severity === 'warning' ? '#f39c12' : '#3498db';\n    h += '<div style=\"border-left:3px solid ' + dColor + ';padding:8px;margin:8px 0;background:#f9f9f9;\">';\n    h += '<strong style=\"text-transform:uppercase;font-size:11px;color:' + dColor + ';\">' + d.severity + '</strong> ';\n    h += '<strong>' + (d.field || 'Unknown field') + '</strong>';\n    if (d.linkedin_value) h += '<p style=\"margin:4px 0;font-size:13px;\">LinkedIn: ' + d.linkedin_value + '</p>';\n    if (d.cv_value) h += '<p style=\"margin:4px 0;font-size:13px;\">CV: ' + d.cv_value + '</p>';\n    if (d.recommendation) h += '<p style=\"margin:4px 0;font-size:13px;color:#555;\">Fix: ' + d.recommendation + '</p>';\n    h += '</div>';\n  }\n}\n\nif (recommendations.length > 0) {\n  h += '<h3 style=\"color:#1a5276;\">Recommended Actions</h3><ol>';\n  for (const rec of recommendations) { h += '<li style=\"margin:5px 0;\">' + rec + '</li>'; }\n  h += '</ol>';\n}\n\nh += '</div></div>';\n\nconst subject = urgency + ': Profile-CV discrepancy' + (r.cv_target_role ? ' for ' + r.cv_target_role : '');\n\nreturn [{ json: { subject, html: h } }];"
+      },
+      "id": "formatAlert",
+      "name": "Format Alert Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+        "options": {}
+      },
+      "id": "sendAlert",
+      "name": "Send Alert",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        200
+      ]
+    },
+    {
+      "parameters": {},
+      "id": "noIssues",
+      "name": "No Issues - Skip",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [
+        2160,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "return [{ json: { message: 'Skipped alignment check - no profile data available' } }];"
+      },
+      "id": "skipNote",
+      "name": "Skip - No Profile",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Wednesday 9AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load LinkedIn Profile": {
+      "main": [
+        [
+          {
+            "node": "Check Data Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Recent CVs": {
+      "main": [
+        [
+          {
+            "node": "Check Data Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check Data Available": {
+      "main": [
+        [
+          {
+            "node": "Has Profile Data?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Profile Data?": {
+      "main": [
+        [
+          {
+            "node": "Claude Analyze Alignment",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Skip - No Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Analyze Alignment": {
+      "main": [
+        [
+          {
+            "node": "Parse Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Results": {
+      "main": [
+        [
+          {
+            "node": "Store Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Store Result": {
+      "main": [
+        [
+          {
+            "node": "Has Issues?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Has Issues?": {
+      "main": [
+        [
+          {
+            "node": "Format Alert Email",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "No Issues - Skip",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Alert Email": {
+      "main": [
+        [
+          {
+            "node": "Send Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Load LinkedIn Profile",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Alert": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "No Issues - Skip": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Skip - No Profile": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Wednesday 9AM": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+  "activeVersionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+  "versionCounter": 14,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:21:22.592Z",
+      "createdAt": "2026-04-02T17:21:22.592Z",
+      "role": "workflow:owner",
+      "workflowId": "htUY822cvSHeY6EW",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:38.151Z",
+    "createdAt": "2026-04-04T21:23:38.151Z",
+    "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+    "workflowId": "htUY822cvSHeY6EW",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 9 * * 3"
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Wednesday 9AM",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT profile_section, section_data, version, last_updated FROM linkedin_profile WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND profile_section IN ('experience', 'education', 'certifications', 'skills', 'headline', 'about') ORDER BY profile_section, version DESC",
+          "options": {}
+        },
+        "id": "loadProfile",
+        "name": "Load LinkedIn Profile",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          620,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT cv_identifier, cv_target_role, cv_data, created_at FROM (SELECT 'latest_cv' as cv_identifier, 'general' as cv_target_role, '{}'::jsonb as cv_data, NOW() as created_at) fallback LIMIT 3",
+          "options": {}
+        },
+        "id": "loadCVs",
+        "name": "Load Recent CVs",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          620,
+          520
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Gather profile data and CV data\nconst profileRows = $('Load LinkedIn Profile').all().map(i => i.json);\nconst cvRows = $('Load Recent CVs').all().map(i => i.json);\n\n// Build profile object from sections\nconst profile = {};\nfor (const row of profileRows) {\n  if (!profile[row.profile_section] || row.version > (profile[row.profile_section].version || 0)) {\n    profile[row.profile_section] = {\n      data: row.section_data,\n      version: row.version,\n      last_updated: row.last_updated\n    };\n  }\n}\n\nconst hasProfile = Object.keys(profile).length > 0;\nconst hasCVs = cvRows.length > 0 && cvRows[0].cv_identifier !== 'latest_cv';\n\n// If no profile data, skip comparison\nif (!hasProfile) {\n  return [{\n    json: {\n      skip: true,\n      reason: 'No LinkedIn profile data found. Please add profile data via the manual ingestion webhook first.',\n      profile: {},\n      cvs: []\n    }\n  }];\n}\n\nreturn [{\n  json: {\n    skip: false,\n    profile: profile,\n    cvs: cvRows,\n    profile_sections: Object.keys(profile)\n  }\n}];"
+        },
+        "id": "checkData",
+        "name": "Check Data Available",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          840,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "skip-check",
+                "leftValue": "={{ $json.skip }}",
+                "rightValue": false,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "ifData",
+        "name": "Has Profile Data?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1060,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 3000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are an expert recruiter who checks LinkedIn profiles against CVs for consistency. Recruiters routinely check LinkedIn after receiving a CV. Discrepancies raise red flags.\\n\\nLINKEDIN PROFILE DATA:\\n\" + JSON.stringify($json.profile) + \"\\n\\nCV DATA (most recent tailored versions):\\n\" + JSON.stringify($json.cvs) + \"\\n\\nCompare the LinkedIn profile against the CV data. Check for:\\n1. CRITICAL: Different job dates, different job titles, missing roles, different companies\\n2. WARNING: Different responsibility descriptions, missing skills that CV claims, education discrepancies\\n3. INFO: Different emphasis/framing (acceptable), missing optional sections\\n\\nFor each discrepancy found, provide:\\n- field: which field differs (e.g. 'experience.acme_corp.dates')\\n- severity: 'critical', 'warning', or 'info'\\n- linkedin_value: what LinkedIn shows\\n- cv_value: what the CV shows\\n- recommendation: how to resolve\\n\\nAlso provide:\\n- overall_status: 'aligned' (no issues), 'minor_issues' (warnings only), or 'discrepancies_found' (any critical)\\n- analysis: 2-3 sentence summary of the alignment status\\n- resolution_recommendations: array of specific actions to take\\n\\nIf profile data is minimal or empty, note that the profile needs to be populated first.\\n\\nRespond ONLY with valid JSON: {\\\"discrepancies\\\": [...], \\\"overall_status\\\": \\\"...\\\", \\\"analysis\\\": \\\"...\\\", \\\"resolution_recommendations\\\": [...]}\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "claudeAnalyze",
+        "name": "Claude Analyze Alignment",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1280,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Parse Claude's analysis\nconst response = $json;\nlet content = '';\nif (response.content && response.content[0]) {\n  content = response.content[0].text;\n}\n\nlet analysis = {};\ntry {\n  const match = content.match(/\\{[\\s\\S]*\\}/);\n  if (match) {\n    analysis = JSON.parse(match[0]);\n  }\n} catch (e) {\n  analysis = {\n    discrepancies: [],\n    overall_status: 'aligned',\n    analysis: 'Could not parse alignment analysis. Manual review recommended.',\n    resolution_recommendations: ['Run alignment check manually']\n  };\n}\n\nconst discrepancies = analysis.discrepancies || [];\nconst criticalCount = discrepancies.filter(d => d.severity === 'critical').length;\nconst warningCount = discrepancies.filter(d => d.severity === 'warning').length;\nconst infoCount = discrepancies.filter(d => d.severity === 'info').length;\n\n// Get CV info from upstream\nconst checkData = $('Check Data Available').first().json;\nconst cvIdentifier = (checkData.cvs && checkData.cvs[0]) ? checkData.cvs[0].cv_identifier : 'weekly_check';\nconst cvTargetRole = (checkData.cvs && checkData.cvs[0]) ? checkData.cvs[0].cv_target_role : 'general';\n\nreturn [{\n  json: {\n    cv_identifier: cvIdentifier,\n    cv_target_role: cvTargetRole,\n    discrepancies: JSON.stringify(discrepancies),\n    critical_count: criticalCount,\n    warning_count: warningCount,\n    info_count: infoCount,\n    overall_status: analysis.overall_status || 'aligned',\n    ai_analysis: analysis.analysis || '',\n    resolution_recommendations: JSON.stringify(analysis.resolution_recommendations || []),\n    has_critical: criticalCount > 0,\n    has_issues: criticalCount > 0 || warningCount > 0\n  }\n}];"
+        },
+        "id": "parseResults",
+        "name": "Parse Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1500,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "=INSERT INTO profile_cv_alignment (tenant_id, cv_identifier, cv_target_role, check_type, discrepancies, critical_count, warning_count, info_count, overall_status, ai_analysis, resolution_recommendations) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.cv_identifier }}', '{{ $json.cv_target_role }}', 'automatic', '{{ $json.discrepancies }}'::jsonb, {{ $json.critical_count }}, {{ $json.warning_count }}, {{ $json.info_count }}, '{{ $json.overall_status }}', '{{ $json.ai_analysis }}', '{{ $json.resolution_recommendations }}'::jsonb) RETURNING id",
+          "options": {}
+        },
+        "id": "storeResult",
+        "name": "Store Result",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1720,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "conditions": [
+              {
+                "id": "critical-check",
+                "leftValue": "={{ $('Parse Results').first().json.has_issues }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ],
+            "combinator": "and"
+          }
+        },
+        "id": "ifCritical",
+        "name": "Has Issues?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2,
+        "position": [
+          1940,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "const r = $('Parse Results').first().json;\n\nconst isCritical = r.critical_count > 0;\nconst urgency = isCritical ? 'URGENT' : 'Notice';\nconst color = isCritical ? '#e74c3c' : '#f39c12';\n\nlet discrepancies = [];\ntry { discrepancies = JSON.parse(r.discrepancies); } catch(e) {}\nlet recommendations = [];\ntry { recommendations = JSON.parse(r.resolution_recommendations); } catch(e) {}\n\nlet h = '<div style=\"font-family:Georgia,serif;max-width:600px;margin:0 auto;color:#333;\">';\nh += '<div style=\"background:' + color + ';color:white;padding:15px;border-radius:4px 4px 0 0;\">';\nh += '<h1 style=\"margin:0;font-size:20px;\">' + urgency + ': Profile-CV Alignment Issue</h1>';\nh += '<p style=\"margin:5px 0 0 0;font-size:14px;\">CV: ' + (r.cv_target_role || r.cv_identifier) + '</p></div>';\n\nh += '<div style=\"padding:15px;border:1px solid #ddd;border-top:0;\">';\nh += '<p><strong>Status:</strong> ' + r.overall_status.replace(/_/g, ' ') + '</p>';\nh += '<p><strong>Analysis:</strong> ' + (r.ai_analysis || 'No analysis available') + '</p>';\n\nh += '<p><strong>Issues found:</strong> ' + r.critical_count + ' critical, ' + r.warning_count + ' warnings, ' + r.info_count + ' info</p>';\n\nif (discrepancies.length > 0) {\n  h += '<h3 style=\"color:#1a5276;\">Discrepancies</h3>';\n  for (const d of discrepancies) {\n    const dColor = d.severity === 'critical' ? '#e74c3c' : d.severity === 'warning' ? '#f39c12' : '#3498db';\n    h += '<div style=\"border-left:3px solid ' + dColor + ';padding:8px;margin:8px 0;background:#f9f9f9;\">';\n    h += '<strong style=\"text-transform:uppercase;font-size:11px;color:' + dColor + ';\">' + d.severity + '</strong> ';\n    h += '<strong>' + (d.field || 'Unknown field') + '</strong>';\n    if (d.linkedin_value) h += '<p style=\"margin:4px 0;font-size:13px;\">LinkedIn: ' + d.linkedin_value + '</p>';\n    if (d.cv_value) h += '<p style=\"margin:4px 0;font-size:13px;\">CV: ' + d.cv_value + '</p>';\n    if (d.recommendation) h += '<p style=\"margin:4px 0;font-size:13px;color:#555;\">Fix: ' + d.recommendation + '</p>';\n    h += '</div>';\n  }\n}\n\nif (recommendations.length > 0) {\n  h += '<h3 style=\"color:#1a5276;\">Recommended Actions</h3><ol>';\n  for (const rec of recommendations) { h += '<li style=\"margin:5px 0;\">' + rec + '</li>'; }\n  h += '</ol>';\n}\n\nh += '</div></div>';\n\nconst subject = urgency + ': Profile-CV discrepancy' + (r.cv_target_role ? ' for ' + r.cv_target_role : '');\n\nreturn [{ json: { subject, html: h } }];"
+        },
+        "id": "formatAlert",
+        "name": "Format Alert Email",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2160,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+          "options": {}
+        },
+        "id": "sendAlert",
+        "name": "Send Alert",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2380,
+          200
+        ]
+      },
+      {
+        "parameters": {},
+        "id": "noIssues",
+        "name": "No Issues - Skip",
+        "type": "n8n-nodes-base.noOp",
+        "typeVersion": 1,
+        "position": [
+          2160,
+          400
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "return [{ json: { message: 'Skipped alignment check - no profile data available' } }];"
+        },
+        "id": "skipNote",
+        "name": "Skip - No Profile",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1280,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Wednesday 9AM": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load LinkedIn Profile": {
+        "main": [
+          [
+            {
+              "node": "Check Data Available",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Recent CVs": {
+        "main": [
+          [
+            {
+              "node": "Check Data Available",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Check Data Available": {
+        "main": [
+          [
+            {
+              "node": "Has Profile Data?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Profile Data?": {
+        "main": [
+          [
+            {
+              "node": "Claude Analyze Alignment",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Skip - No Profile",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Analyze Alignment": {
+        "main": [
+          [
+            {
+              "node": "Parse Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Results": {
+        "main": [
+          [
+            {
+              "node": "Store Result",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Store Result": {
+        "main": [
+          [
+            {
+              "node": "Has Issues?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Has Issues?": {
+        "main": [
+          [
+            {
+              "node": "Format Alert Email",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "No Issues - Skip",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Alert Email": {
+        "main": [
+          [
+            {
+              "node": "Send Alert",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Load LinkedIn Profile",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Alert": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "No Issues - Skip": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Skip - No Profile": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:38.195Z",
+        "id": 129,
+        "workflowId": "htUY822cvSHeY6EW",
+        "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:38.218Z",
+        "id": 130,
+        "workflowId": "htUY822cvSHeY6EW",
+        "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:20.791Z",
+        "id": 193,
+        "workflowId": "htUY822cvSHeY6EW",
+        "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:20.814Z",
+        "id": 194,
+        "workflowId": "htUY822cvSHeY6EW",
+        "versionId": "8f966996-1509-432b-b0eb-6d3e51a0314a",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

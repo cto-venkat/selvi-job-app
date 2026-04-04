@@ -1,0 +1,1162 @@
+{
+  "updatedAt": "2026-04-04T14:22:25.811Z",
+  "createdAt": "2026-04-02T17:21:21.981Z",
+  "id": "mXpByVRapQef77PX",
+  "name": "WF7-CONTENT: Content Calendar Generator",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 8 * * 1"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Monday 8AM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT topic_title, content_pillar, target_audience, published_at, engagement_score, hashtags FROM content_calendar WHERE status = 'published' ORDER BY published_at DESC LIMIT 20",
+        "options": {}
+      },
+      "id": "loadRecent",
+      "name": "Load Recent Content",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT content_pillar, AVG(engagement_score) as avg_engagement, COUNT(*) as post_count FROM content_calendar WHERE status = 'published' AND published_at > NOW() - INTERVAL '90 days' GROUP BY content_pillar",
+        "options": {}
+      },
+      "id": "loadEngagement",
+      "name": "Load Engagement Analytics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT hashtag, category, estimated_reach FROM hashtag_library WHERE is_active = true ORDER BY category, estimated_reach DESC",
+        "options": {}
+      },
+      "id": "loadHashtags",
+      "name": "Load Hashtags",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        740
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Determine seasonal context and week number\nconst now = new Date();\nconst month = now.getMonth() + 1; // 1-12\nconst day = now.getDate();\n\n// Academic calendar\nlet academic_season = 'term_time';\nif (month >= 6 && month <= 8) academic_season = 'summer_break';\nelse if (month === 9) academic_season = 'autumn_start';\nelse if (month === 1) academic_season = 'new_year_start';\nelse if (month === 12 && day > 15) academic_season = 'winter_break';\n\n// Corporate calendar\nlet corporate_season = 'normal';\nif (month === 1) corporate_season = 'new_year_planning';\nelse if (month === 3 || month === 4) corporate_season = 'end_of_fiscal_year';\nelse if (month === 9) corporate_season = 'q4_planning';\nelse if (month === 12) corporate_season = 'year_end_review';\n\n// Special events\nconst special_events = [];\nif (month === 1 && day >= 20 && day <= 31) special_events.push('National Apprenticeship Week (late Jan)');\nif (month === 2 && day >= 6 && day <= 12) special_events.push('National Apprenticeship Week');\nif (month === 3 && day === 8) special_events.push('International Womens Day');\nif (month === 5 && day >= 15 && day <= 21) special_events.push('Mental Health Awareness Week');\nif (month === 6) special_events.push('CIPD Festival of Work (June)');\nif (month === 9) special_events.push('CIPD Annual Conference (autumn)');\nif (month === 10 && day >= 1 && day <= 7) special_events.push('World Teachers Day');\nif (month === 11) special_events.push('CIPD People Management Awards');\n\n// ISO week number\nconst jan4 = new Date(now.getFullYear(), 0, 4);\nconst weekNum = Math.ceil(((now - jan4) / 86400000 + jan4.getDay() + 1) / 7);\nconst year = now.getFullYear();\n\n// Get recent content from previous node\nconst recentContent = $input.all().map(item => item.json);\n\nreturn [{\n  json: {\n    academic_season,\n    corporate_season,\n    special_events,\n    week_number: weekNum,\n    year: year,\n    current_month: month,\n    recent_content: recentContent\n  }\n}];"
+      },
+      "id": "seasonCtx",
+      "name": "Seasonal Context",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are a LinkedIn content strategist for a UK-based Learning & Development professional. She has 18 years experience, a PhD in HR/OD, MBA, and targets both corporate L&D roles (Manager to Head level, GBP 70-80k) and university Lecturer positions.\\n\\nSeasonal context:\\n- Academic season: \" + $json.academic_season + \"\\n- Corporate season: \" + $json.corporate_season + \"\\n- Special events: \" + JSON.stringify($json.special_events) + \"\\n- Week: \" + $json.week_number + \" of \" + $json.year + \"\\n\\nRecent published content (avoid repeating topics):\\n\" + JSON.stringify($json.recent_content || []) + \"\\n\\nContent pillars to choose from:\\n1. uk_ld_trends - UK L&D industry trends, CIPD research, apprenticeship levy\\n2. leadership_dev - Leadership development, coaching, talent strategy\\n3. research_practice - Bridging academia and practice, PhD insights, evidence-based L&D\\n4. digital_ai - AI in learning, digital transformation, EdTech\\n5. international - Cross-cultural L&D, global perspectives, India-UK bridge\\n6. professional_reflections - Career insights, professional growth, UK market observations\\n\\nSelect exactly 3 topics for LinkedIn posts this week. For each topic, provide:\\n1. topic_title: A compelling, specific title (not generic)\\n2. content_pillar: One of the 6 pillars above\\n3. target_audience: 'corporate', 'academic', or 'both'\\n4. topic_angle: 1-2 sentences describing the specific angle\\n5. suggested_post_day: Tuesday, Wednesday, or Thursday (best UK LinkedIn engagement days)\\n6. suggested_post_time: '07:30' or '12:00' (best UK posting times)\\n\\nRespond ONLY with a JSON array of 3 objects. No explanation.\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "selectTopics",
+      "name": "Claude Select Topics",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1060,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude response into individual topics\nconst response = $input.first().json;\nlet content = '';\nif (response.content && response.content[0]) {\n  content = response.content[0].text;\n}\n\n// Extract JSON array from response\nlet topics = [];\ntry {\n  // Try to find JSON array in response\n  const match = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n  if (match) {\n    topics = JSON.parse(match[0]);\n  } else {\n    topics = JSON.parse(content);\n  }\n} catch (e) {\n  // Fallback: create default topics\n  topics = [\n    {\n      topic_title: \"Why UK organisations are rethinking their L&D strategy in \" + new Date().getFullYear(),\n      content_pillar: \"uk_ld_trends\",\n      target_audience: \"corporate\",\n      topic_angle: \"Examining the shift from training delivery to strategic learning partnerships in UK organisations.\",\n      suggested_post_day: \"Tuesday\",\n      suggested_post_time: \"07:30\"\n    },\n    {\n      topic_title: \"What my PhD taught me about evidence-based learning design\",\n      content_pillar: \"research_practice\",\n      target_audience: \"both\",\n      topic_angle: \"Bridging the gap between academic research and practical L&D implementation.\",\n      suggested_post_day: \"Wednesday\",\n      suggested_post_time: \"12:00\"\n    },\n    {\n      topic_title: \"AI tools that actually help L&D professionals (not just hype)\",\n      content_pillar: \"digital_ai\",\n      target_audience: \"corporate\",\n      topic_angle: \"Practical AI applications in corporate learning, tested in real programmes.\",\n      suggested_post_day: \"Thursday\",\n      suggested_post_time: \"07:30\"\n    }\n  ];\n}\n\n// Get context from earlier nodes\nconst seasonCtx = $('Seasonal Context').first().json;\nconst hashtags = $('Load Hashtags').all().map(i => i.json);\nconst engagement = $('Load Engagement Analytics').all().map(i => i.json);\n\nreturn topics.map(topic => ({\n  json: {\n    ...topic,\n    week_number: seasonCtx.week_number,\n    year: seasonCtx.year,\n    academic_season: seasonCtx.academic_season,\n    corporate_season: seasonCtx.corporate_season,\n    hashtags_library: hashtags,\n    engagement_data: engagement\n  }\n}));"
+      },
+      "id": "parseTopics",
+      "name": "Parse Topics",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1280,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop",
+      "name": "Loop Topics",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        1500,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Write a LinkedIn post for an L&D professional in the UK. She has 18 years of corporate L&D experience across India, Middle East, and UK, plus a PhD in HR/OD.\\n\\nTopic: \" + $json.topic_title + \"\\nAngle: \" + $json.topic_angle + \"\\nTarget audience: \" + $json.target_audience + \"\\nSeason: \" + $json.academic_season + \" (academic), \" + $json.corporate_season + \" (corporate)\\n\\nRules:\\n- Write 150-300 words\\n- Use UK English spelling throughout (organisation, programme, behaviour, etc.)\\n- Write in first person as the author\\n- Open with a hook (question, surprising stat, or bold claim)\\n- Include 1-2 specific examples or data points (can be illustrative)\\n- End with a genuine question or call to discussion (NOT generic 'What do you think?')\\n- Tone: thoughtful, confident, grounded. Not preachy or salesy.\\n- DO NOT use: 'In today's rapidly evolving...', 'Let's dive in', 'Game-changer', 'Leverage', 'Unlock', 'Journey', 'Passionate about', 'Excited to share'\\n- DO NOT use emoji\\n- Sound like a real person sharing professional insight, not an AI\\n\\nRespond with ONLY the post text. No title, no hashtags, no explanation.\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "generateDraft",
+      "name": "Claude Generate Draft",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1720,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are an expert editor who removes all signs of AI-generated writing. Perform a three-pass process on this LinkedIn post:\\n\\nORIGINAL POST:\\n\" + ($json.content ? $json.content[0].text : '') + \"\\n\\nPass 1 - Remove AI patterns:\\n- Remove significance inflation ('revolutionary', 'transformative', 'crucial')\\n- Remove promotional language and buzzwords\\n- Remove AI vocabulary ('leverage', 'utilize', 'delve', 'navigate')\\n- Remove sycophantic or overly positive tone\\n- Remove filler phrases ('It is worth noting', 'It goes without saying')\\n- Fix overly balanced paragraph structures (AI loves 'On one hand... on the other hand')\\n- Remove generic closing questions ('What do you think?' 'I would love to hear your thoughts')\\n- Remove hedging qualifiers ('It is important to note that')\\n- Vary sentence length naturally\\n\\nPass 2 - Audit: Read the Pass 1 output. What still makes it obviously AI generated? Fix those tells.\\n\\nPass 3 - UK authenticity: Does this sound like a real UK L&D professional writing on LinkedIn? Check UK spelling (organisation, programme, behaviour). Check cultural references are UK-appropriate. Ensure conversational but professional tone.\\n\\nConstraints: 150-300 words. UK English. No emoji.\\n\\nRespond with ONLY the final post text.\"\n  }]\n}",
+        "options": {}
+      },
+      "id": "humanizer",
+      "name": "Claude Humanizer",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1940,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Get humanized text\nconst response = $json;\nlet draftText = '';\nif (response.content && response.content[0]) {\n  draftText = response.content[0].text;\n}\n\n// Get topic info from the loop\nconst topic = $('Loop Topics').first().json;\n\n// Select hashtags based on content pillar\nconst hashtagLib = topic.hashtags_library || [];\nconst pillarToCategories = {\n  'uk_ld_trends': ['primary_ld', 'uk_specific', 'hr_people'],\n  'leadership_dev': ['leadership', 'primary_ld', 'hr_people'],\n  'research_practice': ['academic', 'primary_ld', 'niche_ld'],\n  'digital_ai': ['ai_tech', 'primary_ld', 'broad_professional'],\n  'international': ['broad_professional', 'primary_ld', 'leadership'],\n  'professional_reflections': ['broad_professional', 'primary_ld', 'uk_specific']\n};\nconst targetCategories = pillarToCategories[topic.content_pillar] || ['primary_ld', 'broad_professional'];\n\n// Pick 3-5 hashtags\nconst selected = [];\nfor (const cat of targetCategories) {\n  const matching = hashtagLib.filter(h => h.category === cat);\n  if (matching.length > 0) {\n    selected.push(matching[0].hashtag);\n  }\n  if (selected.length >= 4) break;\n}\n// Always add one broad hashtag\nif (!selected.includes('#LearningAndDevelopment')) {\n  selected.push('#LearningAndDevelopment');\n}\n\n// Word count\nconst wordCount = draftText.split(/\\s+/).length;\n\nreturn [{\n  json: {\n    topic_title: topic.topic_title,\n    content_pillar: topic.content_pillar,\n    target_audience: topic.target_audience,\n    topic_angle: topic.topic_angle,\n    draft_text: draftText,\n    hashtags: JSON.stringify(selected),\n    suggested_post_day: topic.suggested_post_day,\n    suggested_post_time: topic.suggested_post_time,\n    week_number: topic.week_number,\n    year: topic.year,\n    word_count: wordCount,\n    content_format: 'text_post',\n    model_used: 'claude-sonnet-4',\n    status: 'drafted'\n  }\n}];"
+      },
+      "id": "selectHashtags",
+      "name": "Select Hashtags",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=INSERT INTO content_calendar (tenant_id, topic_title, content_pillar, target_audience, topic_angle, draft_text, hashtags, suggested_post_day, suggested_post_time, status, week_number, year, content_format, model_used, generated_by) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.topic_title }}', '{{ $json.content_pillar }}', '{{ $json.target_audience }}', '{{ $json.topic_angle }}', '{{ $json.draft_text }}', '{{ $json.hashtags }}'::jsonb, '{{ $json.suggested_post_day }}', '{{ $json.suggested_post_time }}', 'drafted', {{ $json.week_number }}, {{ $json.year }}, '{{ $json.content_format }}', '{{ $json.model_used }}', 'wf7-content') RETURNING id, topic_title",
+        "options": {}
+      },
+      "id": "insertContent",
+      "name": "Save to DB",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        2380,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Collect all drafts created in this run\n// We need to query the DB for this week's drafts\nreturn [{ json: { done: true } }];"
+      },
+      "id": "collectResults",
+      "name": "Collect Results",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "=SELECT id, topic_title, content_pillar, target_audience, topic_angle, LEFT(draft_text, 200) as preview, suggested_post_day, suggested_post_time, hashtags, LENGTH(draft_text) - LENGTH(REPLACE(draft_text, ' ', '')) + 1 as word_count FROM content_calendar WHERE generated_by = 'wf7-content' AND created_at > NOW() - INTERVAL '1 hour' ORDER BY created_at DESC",
+        "options": {}
+      },
+      "id": "loadDrafts",
+      "name": "Load New Drafts",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1720,
+        520
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const drafts = $input.all().map(i => i.json);\nconst now = new Date();\nconst weekStart = new Date(now);\nweekStart.setDate(now.getDate() - now.getDay() + 1);\nconst weekStr = weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });\n\nlet html = '<div style=\"font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;\">';\nhtml += '<h1 style=\"color: #1a5276; border-bottom: 2px solid #1a5276; padding-bottom: 10px;\">LinkedIn Content Drafts Ready</h1>';\nhtml += '<p style=\"color: #666;\">Week of ' + weekStr + ' | ' + drafts.length + ' posts generated</p>';\n\nfor (const draft of drafts) {\n  html += '<div style=\"background: #f8f9fa; border-left: 4px solid #2e86c1; padding: 15px; margin: 15px 0; border-radius: 4px;\">';\n  html += '<h3 style=\"margin: 0 0 8px 0; color: #1a5276;\">' + (draft.topic_title || 'Untitled') + '</h3>';\n  html += '<p style=\"margin: 4px 0; font-size: 13px; color: #666;\">';\n  html += '<strong>Pillar:</strong> ' + (draft.content_pillar || '').replace(/_/g, ' ') + ' | ';\n  html += '<strong>Audience:</strong> ' + (draft.target_audience || '') + ' | ';\n  html += '<strong>Day:</strong> ' + (draft.suggested_post_day || '') + ' ' + (draft.suggested_post_time || '') + '</p>';\n  html += '<p style=\"margin: 8px 0; font-style: italic; color: #555;\">' + (draft.topic_angle || '') + '</p>';\n  html += '<p style=\"margin: 8px 0;\">' + (draft.preview || '').substring(0, 150) + '...</p>';\n  html += '<p style=\"margin: 4px 0; font-size: 12px; color: #888;\">~' + (draft.word_count || 0) + ' words</p>';\n  html += '</div>';\n}\n\nhtml += '<div style=\"background: #eaf2f8; padding: 12px; margin-top: 20px; border-radius: 4px;\">';\nhtml += '<p style=\"margin: 0; font-size: 13px;\"><strong>Next steps:</strong> Review each draft, add your personal voice, and post on the suggested days.</p>';\nhtml += '</div></div>';\n\nreturn [{\n  json: {\n    subject: 'LinkedIn Content Drafts - Week of ' + weekStr,\n    html: html\n  }\n}];"
+      },
+      "id": "formatEmail",
+      "name": "Format Email",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1940,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+        "options": {}
+      },
+      "id": "sendEmail",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        520
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Monday 8AM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Recent Content": {
+      "main": [
+        [
+          {
+            "node": "Seasonal Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Seasonal Context": {
+      "main": [
+        [
+          {
+            "node": "Claude Select Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Select Topics": {
+      "main": [
+        [
+          {
+            "node": "Parse Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Parse Topics": {
+      "main": [
+        [
+          {
+            "node": "Loop Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Topics": {
+      "main": [
+        [
+          {
+            "node": "Claude Generate Draft",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Collect Results",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Generate Draft": {
+      "main": [
+        [
+          {
+            "node": "Claude Humanizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Humanizer": {
+      "main": [
+        [
+          {
+            "node": "Select Hashtags",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Select Hashtags": {
+      "main": [
+        [
+          {
+            "node": "Save to DB",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save to DB": {
+      "main": [
+        [
+          {
+            "node": "Loop Topics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Collect Results": {
+      "main": [
+        [
+          {
+            "node": "Load New Drafts",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load New Drafts": {
+      "main": [
+        [
+          {
+            "node": "Format Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Format Email": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Load Recent Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Engagement Analytics": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Load Hashtags": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Monday 8AM": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+  "activeVersionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+  "versionCounter": 7,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:21:21.981Z",
+      "createdAt": "2026-04-02T17:21:21.981Z",
+      "role": "workflow:owner",
+      "workflowId": "mXpByVRapQef77PX",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-02T17:21:21.992Z",
+    "createdAt": "2026-04-02T17:21:21.992Z",
+    "versionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+    "workflowId": "mXpByVRapQef77PX",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 8 * * 1"
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Monday 8AM",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT topic_title, content_pillar, target_audience, published_at, engagement_score, hashtags FROM content_calendar WHERE status = 'published' ORDER BY published_at DESC LIMIT 20",
+          "options": {}
+        },
+        "id": "loadRecent",
+        "name": "Load Recent Content",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT content_pillar, AVG(engagement_score) as avg_engagement, COUNT(*) as post_count FROM content_calendar WHERE status = 'published' AND published_at > NOW() - INTERVAL '90 days' GROUP BY content_pillar",
+          "options": {}
+        },
+        "id": "loadEngagement",
+        "name": "Load Engagement Analytics",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          520
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT hashtag, category, estimated_reach FROM hashtag_library WHERE is_active = true ORDER BY category, estimated_reach DESC",
+          "options": {}
+        },
+        "id": "loadHashtags",
+        "name": "Load Hashtags",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          740
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Determine seasonal context and week number\nconst now = new Date();\nconst month = now.getMonth() + 1; // 1-12\nconst day = now.getDate();\n\n// Academic calendar\nlet academic_season = 'term_time';\nif (month >= 6 && month <= 8) academic_season = 'summer_break';\nelse if (month === 9) academic_season = 'autumn_start';\nelse if (month === 1) academic_season = 'new_year_start';\nelse if (month === 12 && day > 15) academic_season = 'winter_break';\n\n// Corporate calendar\nlet corporate_season = 'normal';\nif (month === 1) corporate_season = 'new_year_planning';\nelse if (month === 3 || month === 4) corporate_season = 'end_of_fiscal_year';\nelse if (month === 9) corporate_season = 'q4_planning';\nelse if (month === 12) corporate_season = 'year_end_review';\n\n// Special events\nconst special_events = [];\nif (month === 1 && day >= 20 && day <= 31) special_events.push('National Apprenticeship Week (late Jan)');\nif (month === 2 && day >= 6 && day <= 12) special_events.push('National Apprenticeship Week');\nif (month === 3 && day === 8) special_events.push('International Womens Day');\nif (month === 5 && day >= 15 && day <= 21) special_events.push('Mental Health Awareness Week');\nif (month === 6) special_events.push('CIPD Festival of Work (June)');\nif (month === 9) special_events.push('CIPD Annual Conference (autumn)');\nif (month === 10 && day >= 1 && day <= 7) special_events.push('World Teachers Day');\nif (month === 11) special_events.push('CIPD People Management Awards');\n\n// ISO week number\nconst jan4 = new Date(now.getFullYear(), 0, 4);\nconst weekNum = Math.ceil(((now - jan4) / 86400000 + jan4.getDay() + 1) / 7);\nconst year = now.getFullYear();\n\n// Get recent content from previous node\nconst recentContent = $input.all().map(item => item.json);\n\nreturn [{\n  json: {\n    academic_season,\n    corporate_season,\n    special_events,\n    week_number: weekNum,\n    year: year,\n    current_month: month,\n    recent_content: recentContent\n  }\n}];"
+        },
+        "id": "seasonCtx",
+        "name": "Seasonal Context",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are a LinkedIn content strategist for a UK-based Learning & Development professional. She has 18 years experience, a PhD in HR/OD, MBA, and targets both corporate L&D roles (Manager to Head level, GBP 70-80k) and university Lecturer positions.\\n\\nSeasonal context:\\n- Academic season: \" + $json.academic_season + \"\\n- Corporate season: \" + $json.corporate_season + \"\\n- Special events: \" + JSON.stringify($json.special_events) + \"\\n- Week: \" + $json.week_number + \" of \" + $json.year + \"\\n\\nRecent published content (avoid repeating topics):\\n\" + JSON.stringify($json.recent_content || []) + \"\\n\\nContent pillars to choose from:\\n1. uk_ld_trends - UK L&D industry trends, CIPD research, apprenticeship levy\\n2. leadership_dev - Leadership development, coaching, talent strategy\\n3. research_practice - Bridging academia and practice, PhD insights, evidence-based L&D\\n4. digital_ai - AI in learning, digital transformation, EdTech\\n5. international - Cross-cultural L&D, global perspectives, India-UK bridge\\n6. professional_reflections - Career insights, professional growth, UK market observations\\n\\nSelect exactly 3 topics for LinkedIn posts this week. For each topic, provide:\\n1. topic_title: A compelling, specific title (not generic)\\n2. content_pillar: One of the 6 pillars above\\n3. target_audience: 'corporate', 'academic', or 'both'\\n4. topic_angle: 1-2 sentences describing the specific angle\\n5. suggested_post_day: Tuesday, Wednesday, or Thursday (best UK LinkedIn engagement days)\\n6. suggested_post_time: '07:30' or '12:00' (best UK posting times)\\n\\nRespond ONLY with a JSON array of 3 objects. No explanation.\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "selectTopics",
+        "name": "Claude Select Topics",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          660,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Parse Claude response into individual topics\nconst response = $input.first().json;\nlet content = '';\nif (response.content && response.content[0]) {\n  content = response.content[0].text;\n}\n\n// Extract JSON array from response\nlet topics = [];\ntry {\n  // Try to find JSON array in response\n  const match = content.match(/\\[\\s*\\{[\\s\\S]*\\}\\s*\\]/);\n  if (match) {\n    topics = JSON.parse(match[0]);\n  } else {\n    topics = JSON.parse(content);\n  }\n} catch (e) {\n  // Fallback: create default topics\n  topics = [\n    {\n      topic_title: \"Why UK organisations are rethinking their L&D strategy in \" + new Date().getFullYear(),\n      content_pillar: \"uk_ld_trends\",\n      target_audience: \"corporate\",\n      topic_angle: \"Examining the shift from training delivery to strategic learning partnerships in UK organisations.\",\n      suggested_post_day: \"Tuesday\",\n      suggested_post_time: \"07:30\"\n    },\n    {\n      topic_title: \"What my PhD taught me about evidence-based learning design\",\n      content_pillar: \"research_practice\",\n      target_audience: \"both\",\n      topic_angle: \"Bridging the gap between academic research and practical L&D implementation.\",\n      suggested_post_day: \"Wednesday\",\n      suggested_post_time: \"12:00\"\n    },\n    {\n      topic_title: \"AI tools that actually help L&D professionals (not just hype)\",\n      content_pillar: \"digital_ai\",\n      target_audience: \"corporate\",\n      topic_angle: \"Practical AI applications in corporate learning, tested in real programmes.\",\n      suggested_post_day: \"Thursday\",\n      suggested_post_time: \"07:30\"\n    }\n  ];\n}\n\n// Get context from earlier nodes\nconst seasonCtx = $('Seasonal Context').first().json;\nconst hashtags = $('Load Hashtags').all().map(i => i.json);\nconst engagement = $('Load Engagement Analytics').all().map(i => i.json);\n\nreturn topics.map(topic => ({\n  json: {\n    ...topic,\n    week_number: seasonCtx.week_number,\n    year: seasonCtx.year,\n    academic_season: seasonCtx.academic_season,\n    corporate_season: seasonCtx.corporate_season,\n    hashtags_library: hashtags,\n    engagement_data: engagement\n  }\n}));"
+        },
+        "id": "parseTopics",
+        "name": "Parse Topics",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          880,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop",
+        "name": "Loop Topics",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          1100,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"Write a LinkedIn post for an L&D professional in the UK. She has 18 years of corporate L&D experience across India, Middle East, and UK, plus a PhD in HR/OD.\\n\\nTopic: \" + $json.topic_title + \"\\nAngle: \" + $json.topic_angle + \"\\nTarget audience: \" + $json.target_audience + \"\\nSeason: \" + $json.academic_season + \" (academic), \" + $json.corporate_season + \" (corporate)\\n\\nRules:\\n- Write 150-300 words\\n- Use UK English spelling throughout (organisation, programme, behaviour, etc.)\\n- Write in first person as the author\\n- Open with a hook (question, surprising stat, or bold claim)\\n- Include 1-2 specific examples or data points (can be illustrative)\\n- End with a genuine question or call to discussion (NOT generic 'What do you think?')\\n- Tone: thoughtful, confident, grounded. Not preachy or salesy.\\n- DO NOT use: 'In today's rapidly evolving...', 'Let's dive in', 'Game-changer', 'Leverage', 'Unlock', 'Journey', 'Passionate about', 'Excited to share'\\n- DO NOT use emoji\\n- Sound like a real person sharing professional insight, not an AI\\n\\nRespond with ONLY the post text. No title, no hashtags, no explanation.\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "generateDraft",
+        "name": "Claude Generate Draft",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1320,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\n  \"model\": \"claude-sonnet-4-20250514\",\n  \"max_tokens\": 2000,\n  \"messages\": [{\n    \"role\": \"user\",\n    \"content\": \"You are an expert editor who removes all signs of AI-generated writing. Perform a three-pass process on this LinkedIn post:\\n\\nORIGINAL POST:\\n\" + ($json.content ? $json.content[0].text : '') + \"\\n\\nPass 1 - Remove AI patterns:\\n- Remove significance inflation ('revolutionary', 'transformative', 'crucial')\\n- Remove promotional language and buzzwords\\n- Remove AI vocabulary ('leverage', 'utilize', 'delve', 'navigate')\\n- Remove sycophantic or overly positive tone\\n- Remove filler phrases ('It is worth noting', 'It goes without saying')\\n- Fix overly balanced paragraph structures (AI loves 'On one hand... on the other hand')\\n- Remove generic closing questions ('What do you think?' 'I would love to hear your thoughts')\\n- Remove hedging qualifiers ('It is important to note that')\\n- Vary sentence length naturally\\n\\nPass 2 - Audit: Read the Pass 1 output. What still makes it obviously AI generated? Fix those tells.\\n\\nPass 3 - UK authenticity: Does this sound like a real UK L&D professional writing on LinkedIn? Check UK spelling (organisation, programme, behaviour). Check cultural references are UK-appropriate. Ensure conversational but professional tone.\\n\\nConstraints: 150-300 words. UK English. No emoji.\\n\\nRespond with ONLY the final post text.\"\n  }]\n}",
+          "options": {}
+        },
+        "id": "humanizer",
+        "name": "Claude Humanizer",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1540,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Get humanized text\nconst response = $json;\nlet draftText = '';\nif (response.content && response.content[0]) {\n  draftText = response.content[0].text;\n}\n\n// Get topic info from the loop\nconst topic = $('Loop Topics').first().json;\n\n// Select hashtags based on content pillar\nconst hashtagLib = topic.hashtags_library || [];\nconst pillarToCategories = {\n  'uk_ld_trends': ['primary_ld', 'uk_specific', 'hr_people'],\n  'leadership_dev': ['leadership', 'primary_ld', 'hr_people'],\n  'research_practice': ['academic', 'primary_ld', 'niche_ld'],\n  'digital_ai': ['ai_tech', 'primary_ld', 'broad_professional'],\n  'international': ['broad_professional', 'primary_ld', 'leadership'],\n  'professional_reflections': ['broad_professional', 'primary_ld', 'uk_specific']\n};\nconst targetCategories = pillarToCategories[topic.content_pillar] || ['primary_ld', 'broad_professional'];\n\n// Pick 3-5 hashtags\nconst selected = [];\nfor (const cat of targetCategories) {\n  const matching = hashtagLib.filter(h => h.category === cat);\n  if (matching.length > 0) {\n    selected.push(matching[0].hashtag);\n  }\n  if (selected.length >= 4) break;\n}\n// Always add one broad hashtag\nif (!selected.includes('#LearningAndDevelopment')) {\n  selected.push('#LearningAndDevelopment');\n}\n\n// Word count\nconst wordCount = draftText.split(/\\s+/).length;\n\nreturn [{\n  json: {\n    topic_title: topic.topic_title,\n    content_pillar: topic.content_pillar,\n    target_audience: topic.target_audience,\n    topic_angle: topic.topic_angle,\n    draft_text: draftText,\n    hashtags: JSON.stringify(selected),\n    suggested_post_day: topic.suggested_post_day,\n    suggested_post_time: topic.suggested_post_time,\n    week_number: topic.week_number,\n    year: topic.year,\n    word_count: wordCount,\n    content_format: 'text_post',\n    model_used: 'claude-sonnet-4',\n    status: 'drafted'\n  }\n}];"
+        },
+        "id": "selectHashtags",
+        "name": "Select Hashtags",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1760,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "=INSERT INTO content_calendar (topic_title, content_pillar, target_audience, topic_angle, draft_text, hashtags, suggested_post_day, suggested_post_time, status, week_number, year, content_format, model_used, generated_by) VALUES ('{{ $json.topic_title }}', '{{ $json.content_pillar }}', '{{ $json.target_audience }}', '{{ $json.topic_angle }}', '{{ $json.draft_text }}', '{{ $json.hashtags }}'::jsonb, '{{ $json.suggested_post_day }}', '{{ $json.suggested_post_time }}', 'drafted', {{ $json.week_number }}, {{ $json.year }}, '{{ $json.content_format }}', '{{ $json.model_used }}', 'wf7-content') RETURNING id, topic_title",
+          "options": {}
+        },
+        "id": "insertContent",
+        "name": "Save to DB",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1980,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Collect all drafts created in this run\n// We need to query the DB for this week's drafts\nreturn [{ json: { done: true } }];"
+        },
+        "id": "collectResults",
+        "name": "Collect Results",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "=SELECT id, topic_title, content_pillar, target_audience, topic_angle, LEFT(draft_text, 200) as preview, suggested_post_day, suggested_post_time, hashtags, LENGTH(draft_text) - LENGTH(REPLACE(draft_text, ' ', '')) + 1 as word_count FROM content_calendar WHERE generated_by = 'wf7-content' AND created_at > NOW() - INTERVAL '1 hour' ORDER BY created_at DESC",
+          "options": {}
+        },
+        "id": "loadDrafts",
+        "name": "Load New Drafts",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1320,
+          520
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "const drafts = $input.all().map(i => i.json);\nconst now = new Date();\nconst weekStart = new Date(now);\nweekStart.setDate(now.getDate() - now.getDay() + 1);\nconst weekStr = weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });\n\nlet html = '<div style=\"font-family: Georgia, serif; max-width: 600px; margin: 0 auto; color: #333;\">';\nhtml += '<h1 style=\"color: #1a5276; border-bottom: 2px solid #1a5276; padding-bottom: 10px;\">LinkedIn Content Drafts Ready</h1>';\nhtml += '<p style=\"color: #666;\">Week of ' + weekStr + ' | ' + drafts.length + ' posts generated</p>';\n\nfor (const draft of drafts) {\n  html += '<div style=\"background: #f8f9fa; border-left: 4px solid #2e86c1; padding: 15px; margin: 15px 0; border-radius: 4px;\">';\n  html += '<h3 style=\"margin: 0 0 8px 0; color: #1a5276;\">' + (draft.topic_title || 'Untitled') + '</h3>';\n  html += '<p style=\"margin: 4px 0; font-size: 13px; color: #666;\">';\n  html += '<strong>Pillar:</strong> ' + (draft.content_pillar || '').replace(/_/g, ' ') + ' | ';\n  html += '<strong>Audience:</strong> ' + (draft.target_audience || '') + ' | ';\n  html += '<strong>Day:</strong> ' + (draft.suggested_post_day || '') + ' ' + (draft.suggested_post_time || '') + '</p>';\n  html += '<p style=\"margin: 8px 0; font-style: italic; color: #555;\">' + (draft.topic_angle || '') + '</p>';\n  html += '<p style=\"margin: 8px 0;\">' + (draft.preview || '').substring(0, 150) + '...</p>';\n  html += '<p style=\"margin: 4px 0; font-size: 12px; color: #888;\">~' + (draft.word_count || 0) + ' words</p>';\n  html += '</div>';\n}\n\nhtml += '<div style=\"background: #eaf2f8; padding: 12px; margin-top: 20px; border-radius: 4px;\">';\nhtml += '<p style=\"margin: 0; font-size: 13px;\"><strong>Next steps:</strong> Review each draft, add your personal voice, and post on the suggested days.</p>';\nhtml += '</div></div>';\n\nreturn [{\n  json: {\n    subject: 'LinkedIn Content Drafts - Week of ' + weekStr,\n    html: html\n  }\n}];"
+        },
+        "id": "formatEmail",
+        "name": "Format Email",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1540,
+          520
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"chellamma.uk@gmail.com\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+          "options": {}
+        },
+        "id": "sendEmail",
+        "name": "Send Email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          1760,
+          520
+        ]
+      }
+    ],
+    "connections": {
+      "Monday 8AM": {
+        "main": [
+          [
+            {
+              "node": "Load Recent Content",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Load Engagement Analytics",
+              "type": "main",
+              "index": 0
+            },
+            {
+              "node": "Load Hashtags",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load Recent Content": {
+        "main": [
+          [
+            {
+              "node": "Seasonal Context",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Seasonal Context": {
+        "main": [
+          [
+            {
+              "node": "Claude Select Topics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Select Topics": {
+        "main": [
+          [
+            {
+              "node": "Parse Topics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Parse Topics": {
+        "main": [
+          [
+            {
+              "node": "Loop Topics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Topics": {
+        "main": [
+          [
+            {
+              "node": "Claude Generate Draft",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Collect Results",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Generate Draft": {
+        "main": [
+          [
+            {
+              "node": "Claude Humanizer",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Humanizer": {
+        "main": [
+          [
+            {
+              "node": "Select Hashtags",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Select Hashtags": {
+        "main": [
+          [
+            {
+              "node": "Save to DB",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Save to DB": {
+        "main": [
+          [
+            {
+              "node": "Loop Topics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Collect Results": {
+        "main": [
+          [
+            {
+              "node": "Load New Drafts",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Load New Drafts": {
+        "main": [
+          [
+            {
+              "node": "Format Email",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Format Email": {
+        "main": [
+          [
+            {
+              "node": "Send Email",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-02T17:21:42.541Z",
+        "id": 48,
+        "workflowId": "mXpByVRapQef77PX",
+        "versionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:25.862Z",
+        "id": 90,
+        "workflowId": "mXpByVRapQef77PX",
+        "versionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:25.888Z",
+        "id": 91,
+        "workflowId": "mXpByVRapQef77PX",
+        "versionId": "aff0d3e1-989e-41ad-87f5-49a414c17504",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

@@ -1,0 +1,853 @@
+{
+  "updatedAt": "2026-04-04T21:23:36.869Z",
+  "createdAt": "2026-04-02T17:19:17.036Z",
+  "id": "KBKhzcxNN9yXcX21",
+  "name": "WF7-INTEL: Weekly LinkedIn Intelligence Digest",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "0 18 * * 0"
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Sunday 6PM",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT viewer_name, viewer_title, viewer_company, category, priority, action_recommended, view_count, last_viewed_at FROM recruiter_views WHERE last_viewed_at > NOW() - INTERVAL '7 days' ORDER BY priority DESC, last_viewed_at DESC LIMIT 50",
+        "options": {}
+      },
+      "id": "q1",
+      "name": "Q1 Profile Views",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT sender_name, sender_title, sender_company, category, message_preview, requires_response, response_sent FROM linkedin_messages WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND received_at > NOW() - INTERVAL '7 days' ORDER BY category, received_at DESC LIMIT 20",
+        "options": {}
+      },
+      "id": "q2",
+      "name": "Q2 InMails",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        840,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT requester_name, requester_title, requester_company, category, action_recommended, action_taken FROM linkedin_connection_requests WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND received_at > NOW() - INTERVAL '7 days' ORDER BY category, received_at DESC LIMIT 20",
+        "options": {}
+      },
+      "id": "q3",
+      "name": "Q3 Connections",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1060,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT search_count, search_terms, searcher_companies, searcher_titles, reported_at FROM search_appearances WHERE reported_at > NOW() - INTERVAL '7 days' ORDER BY reported_at DESC LIMIT 1",
+        "options": {}
+      },
+      "id": "q4",
+      "name": "Q4 Search",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT topic_title, content_pillar, published_at, engagement_score, status FROM content_calendar WHERE (status = 'published' AND published_at > NOW() - INTERVAL '14 days') OR (status = 'drafted' AND created_at > NOW() - INTERVAL '7 days') ORDER BY published_at DESC NULLS LAST LIMIT 10",
+        "options": {}
+      },
+      "id": "q5",
+      "name": "Q5 Content",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1500,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT metric_type, metric_value, metric_date FROM linkedin_metrics WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND metric_date > NOW() - INTERVAL '30 days' ORDER BY metric_date DESC LIMIT 50",
+        "options": {}
+      },
+      "id": "q6",
+      "name": "Q6 Metrics",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1720,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cv_identifier, cv_target_role, overall_status, critical_count, warning_count, checked_at FROM profile_cv_alignment WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND resolved = false ORDER BY checked_at DESC LIMIT 5",
+        "options": {}
+      },
+      "id": "q7",
+      "name": "Q7 Alignment",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1940,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gather data from all query nodes\nconst profileViews = $('Q1 Profile Views').all().map(i => i.json);\nconst inmails = $('Q2 InMails').all().map(i => i.json);\nconst connReqs = $('Q3 Connections').all().map(i => i.json);\nconst searchApp = $('Q4 Search').all().map(i => i.json);\nconst contentPerf = $('Q5 Content').all().map(i => i.json);\nconst metrics = $('Q6 Metrics').all().map(i => i.json);\nconst alignIssues = $('Q7 Alignment').all().map(i => i.json);\n\nconst now = new Date();\nconst weekStart = new Date(now);\nweekStart.setDate(now.getDate() - 6);\nconst weekStartStr = weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });\nconst weekEndStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });\n\nconst viewCount = profileViews.length;\nconst highPri = profileViews.filter(v => v.priority === 'high');\nconst latestSearch = searchApp.length > 0 ? searchApp[0] : null;\nconst searchCount = latestSearch ? (latestSearch.search_count || 0) : 0;\nconst pendingMsgs = inmails.filter(m => m.requires_response && !m.response_sent);\nconst published = contentPerf.filter(c => c.status === 'published');\nconst drafted = contentPerf.filter(c => c.status === 'drafted');\n\n// Action items\nconst actions = [];\nif (highPri.length > 0) actions.push('Review ' + highPri.length + ' high-priority profile viewer(s)');\nif (pendingMsgs.length > 0) actions.push('Respond to ' + pendingMsgs.length + ' pending LinkedIn message(s)');\nconst pendingConn = connReqs.filter(c => !c.action_taken || c.action_taken === 'pending');\nif (pendingConn.length > 0) actions.push('Review ' + pendingConn.length + ' pending connection request(s)');\nif (drafted.length > 0) actions.push('Review and post ' + drafted.length + ' drafted LinkedIn post(s)');\nif (alignIssues.length > 0) actions.push('Resolve ' + alignIssues.length + ' profile-CV alignment issue(s)');\nif (published.length === 0) actions.push('No posts published recently -- aim for 1-2 posts this week');\n\nfunction esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }\n\nlet h = '<div style=\"font-family:Georgia,serif;max-width:650px;margin:0 auto;color:#333;\">';\nh += '<h1 style=\"color:#1a5276;border-bottom:3px solid #1a5276;padding-bottom:10px;\">LinkedIn Intelligence Digest</h1>';\nh += '<p style=\"color:#666;font-size:14px;\">Week of ' + weekStartStr + ' - ' + weekEndStr + '</p>';\n\n// Stats bar\nh += '<table style=\"width:100%;border-collapse:collapse;margin:15px 0;\"><tr>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + viewCount + '</strong><br><span style=\"font-size:12px;color:#666;\">Profile Views</span></td><td style=\"width:2%\"></td>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + searchCount + '</strong><br><span style=\"font-size:12px;color:#666;\">Search Appearances</span></td><td style=\"width:2%\"></td>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + inmails.length + '</strong><br><span style=\"font-size:12px;color:#666;\">Messages</span></td>';\nh += '</tr></table>';\n\n// Recruiter Intel\nh += '<h2 style=\"color:#1a5276;margin-top:25px;\">Recruiter Intelligence</h2>';\nif (highPri.length > 0) {\n  h += '<div style=\"background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;\"><strong style=\"color:#e67e22;\">High Priority Viewers</strong>';\n  for (const v of highPri) {\n    h += '<p style=\"margin:8px 0;\">' + esc(v.viewer_name) + ' - ' + esc(v.viewer_title) + ' at ' + esc(v.viewer_company) + '</p>';\n  }\n  h += '</div>';\n}\nif (profileViews.length > 0) {\n  h += '<table style=\"width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;\">';\n  h += '<tr style=\"background:#f1f1f1;\"><th style=\"padding:8px;text-align:left;\">Viewer</th><th style=\"padding:8px;text-align:left;\">Title</th><th style=\"padding:8px;text-align:left;\">Company</th></tr>';\n  for (const v of profileViews.slice(0, 10)) {\n    h += '<tr><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_name) + '</td><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_title) + '</td><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_company) + '</td></tr>';\n  }\n  h += '</table>';\n} else { h += '<p style=\"color:#888;\">No profile views this week.</p>'; }\n\n// Messages\nif (inmails.length > 0) {\n  h += '<h3 style=\"color:#2e86c1;\">Messages</h3>';\n  for (const m of inmails) {\n    const badge = (m.requires_response && !m.response_sent) ? ' <span style=\"background:#e74c3c;color:white;font-size:11px;padding:2px 6px;border-radius:3px;\">NEEDS REPLY</span>' : '';\n    h += '<div style=\"border-bottom:1px solid #eee;padding:8px 0;\"><strong>' + esc(m.sender_name) + '</strong> (' + esc(m.sender_company) + ')' + badge + '</div>';\n  }\n}\n\n// Connections\nif (connReqs.length > 0) {\n  h += '<h3 style=\"color:#2e86c1;\">Connection Requests (' + connReqs.length + ')</h3>';\n  h += '<table style=\"width:100%;border-collapse:collapse;font-size:13px;\">';\n  for (const c of connReqs) {\n    h += '<tr><td style=\"padding:5px;\">' + esc(c.requester_name) + '</td><td style=\"padding:5px;\">' + esc(c.requester_company) + '</td><td style=\"padding:5px;\">' + esc((c.action_recommended||'').replace(/_/g,' ')) + '</td></tr>';\n  }\n  h += '</table>';\n}\n\n// Content\nh += '<h2 style=\"color:#1a5276;margin-top:25px;\">Content Performance</h2>';\nif (published.length > 0) {\n  for (const c of published) { h += '<p><strong>' + esc(c.topic_title) + '</strong> <span style=\"color:#888;font-size:12px;\">' + esc((c.content_pillar||'').replace(/_/g,' ')) + '</span>' + (c.engagement_score ? ' <span style=\"background:#27ae60;color:white;font-size:11px;padding:2px 6px;border-radius:3px;\">Score: ' + c.engagement_score + '</span>' : '') + '</p>'; }\n} else { h += '<p style=\"color:#888;\">No published content in the past 2 weeks.</p>'; }\nif (drafted.length > 0) { h += '<p>' + drafted.length + ' draft(s) ready for review.</p>'; }\n\n// Alignment\nif (alignIssues.length > 0) {\n  h += '<h2 style=\"color:#1a5276;margin-top:25px;\">Profile-CV Alignment</h2>';\n  for (const a of alignIssues) {\n    const clr = a.critical_count > 0 ? '#e74c3c' : '#f39c12';\n    h += '<div style=\"border-left:3px solid ' + clr + ';padding:8px;margin:8px 0;\"><strong>' + esc(a.cv_target_role || a.cv_identifier) + '</strong> <span style=\"font-size:12px;\">' + a.critical_count + ' critical, ' + a.warning_count + ' warnings</span></div>';\n  }\n}\n\n// Actions\nh += '<h2 style=\"color:#1a5276;margin-top:25px;border-top:2px solid #1a5276;padding-top:15px;\">Recommended Actions</h2>';\nif (actions.length > 0) { h += '<ol style=\"padding-left:20px;\">'; for (const a of actions) { h += '<li style=\"margin:8px 0;\">' + esc(a) + '</li>'; } h += '</ol>'; }\nelse { h += '<p style=\"color:#27ae60;\">All clear this week.</p>'; }\n\nh += '<p style=\"color:#aaa;font-size:11px;margin-top:30px;text-align:center;\">Selvi Job App - Module 7 LinkedIn Intelligence</p></div>';\n\nreturn [{ json: { subject: 'LinkedIn Intelligence Digest - Week of ' + weekStartStr, html: h } }];"
+      },
+      "id": "compile",
+      "name": "Compile and Format",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2160,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+        "options": {}
+      },
+      "id": "sendEmail",
+      "name": "Send Email",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2380,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        300
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Sunday 6PM": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q1 Profile Views": {
+      "main": [
+        [
+          {
+            "node": "Q2 InMails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q2 InMails": {
+      "main": [
+        [
+          {
+            "node": "Q3 Connections",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q3 Connections": {
+      "main": [
+        [
+          {
+            "node": "Q4 Search",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q4 Search": {
+      "main": [
+        [
+          {
+            "node": "Q5 Content",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q5 Content": {
+      "main": [
+        [
+          {
+            "node": "Q6 Metrics",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q6 Metrics": {
+      "main": [
+        [
+          {
+            "node": "Q7 Alignment",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Q7 Alignment": {
+      "main": [
+        [
+          {
+            "node": "Compile and Format",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Compile and Format": {
+      "main": [
+        [
+          {
+            "node": "Send Email",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Q1 Profile Views",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Email": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Sunday 6PM": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+  "activeVersionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+  "versionCounter": 14,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-04-02T17:19:17.036Z",
+      "createdAt": "2026-04-02T17:19:17.036Z",
+      "role": "workflow:owner",
+      "workflowId": "KBKhzcxNN9yXcX21",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:36.871Z",
+    "createdAt": "2026-04-04T21:23:36.871Z",
+    "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+    "workflowId": "KBKhzcxNN9yXcX21",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "cronExpression",
+                "expression": "0 18 * * 0"
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Sunday 6PM",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT viewer_name, viewer_title, viewer_company, category, priority, action_recommended, view_count, last_viewed_at FROM recruiter_views WHERE last_viewed_at > NOW() - INTERVAL '7 days' ORDER BY priority DESC, last_viewed_at DESC LIMIT 50",
+          "options": {}
+        },
+        "id": "q1",
+        "name": "Q1 Profile Views",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          620,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT sender_name, sender_title, sender_company, category, message_preview, requires_response, response_sent FROM linkedin_messages WHERE received_at > NOW() - INTERVAL '7 days' ORDER BY category, received_at DESC LIMIT 20",
+          "options": {}
+        },
+        "id": "q2",
+        "name": "Q2 InMails",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          840,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT requester_name, requester_title, requester_company, category, action_recommended, action_taken FROM linkedin_connection_requests WHERE received_at > NOW() - INTERVAL '7 days' ORDER BY category, received_at DESC LIMIT 20",
+          "options": {}
+        },
+        "id": "q3",
+        "name": "Q3 Connections",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1060,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT search_count, search_terms, searcher_companies, searcher_titles, reported_at FROM search_appearances WHERE reported_at > NOW() - INTERVAL '7 days' ORDER BY reported_at DESC LIMIT 1",
+          "options": {}
+        },
+        "id": "q4",
+        "name": "Q4 Search",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1280,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT topic_title, content_pillar, published_at, engagement_score, status FROM content_calendar WHERE (status = 'published' AND published_at > NOW() - INTERVAL '14 days') OR (status = 'drafted' AND created_at > NOW() - INTERVAL '7 days') ORDER BY published_at DESC NULLS LAST LIMIT 10",
+          "options": {}
+        },
+        "id": "q5",
+        "name": "Q5 Content",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1500,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT metric_type, metric_value, metric_date FROM linkedin_metrics WHERE metric_date > NOW() - INTERVAL '30 days' ORDER BY metric_date DESC LIMIT 50",
+          "options": {}
+        },
+        "id": "q6",
+        "name": "Q6 Metrics",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1720,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT cv_identifier, cv_target_role, overall_status, critical_count, warning_count, checked_at FROM profile_cv_alignment WHERE resolved = false ORDER BY checked_at DESC LIMIT 5",
+          "options": {}
+        },
+        "id": "q7",
+        "name": "Q7 Alignment",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1940,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Gather data from all query nodes\nconst profileViews = $('Q1 Profile Views').all().map(i => i.json);\nconst inmails = $('Q2 InMails').all().map(i => i.json);\nconst connReqs = $('Q3 Connections').all().map(i => i.json);\nconst searchApp = $('Q4 Search').all().map(i => i.json);\nconst contentPerf = $('Q5 Content').all().map(i => i.json);\nconst metrics = $('Q6 Metrics').all().map(i => i.json);\nconst alignIssues = $('Q7 Alignment').all().map(i => i.json);\n\nconst now = new Date();\nconst weekStart = new Date(now);\nweekStart.setDate(now.getDate() - 6);\nconst weekStartStr = weekStart.toLocaleDateString('en-GB', { day: 'numeric', month: 'long' });\nconst weekEndStr = now.toLocaleDateString('en-GB', { day: 'numeric', month: 'long', year: 'numeric' });\n\nconst viewCount = profileViews.length;\nconst highPri = profileViews.filter(v => v.priority === 'high');\nconst latestSearch = searchApp.length > 0 ? searchApp[0] : null;\nconst searchCount = latestSearch ? (latestSearch.search_count || 0) : 0;\nconst pendingMsgs = inmails.filter(m => m.requires_response && !m.response_sent);\nconst published = contentPerf.filter(c => c.status === 'published');\nconst drafted = contentPerf.filter(c => c.status === 'drafted');\n\n// Action items\nconst actions = [];\nif (highPri.length > 0) actions.push('Review ' + highPri.length + ' high-priority profile viewer(s)');\nif (pendingMsgs.length > 0) actions.push('Respond to ' + pendingMsgs.length + ' pending LinkedIn message(s)');\nconst pendingConn = connReqs.filter(c => !c.action_taken || c.action_taken === 'pending');\nif (pendingConn.length > 0) actions.push('Review ' + pendingConn.length + ' pending connection request(s)');\nif (drafted.length > 0) actions.push('Review and post ' + drafted.length + ' drafted LinkedIn post(s)');\nif (alignIssues.length > 0) actions.push('Resolve ' + alignIssues.length + ' profile-CV alignment issue(s)');\nif (published.length === 0) actions.push('No posts published recently -- aim for 1-2 posts this week');\n\nfunction esc(s) { return (s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/\"/g,'&quot;'); }\n\nlet h = '<div style=\"font-family:Georgia,serif;max-width:650px;margin:0 auto;color:#333;\">';\nh += '<h1 style=\"color:#1a5276;border-bottom:3px solid #1a5276;padding-bottom:10px;\">LinkedIn Intelligence Digest</h1>';\nh += '<p style=\"color:#666;font-size:14px;\">Week of ' + weekStartStr + ' - ' + weekEndStr + '</p>';\n\n// Stats bar\nh += '<table style=\"width:100%;border-collapse:collapse;margin:15px 0;\"><tr>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + viewCount + '</strong><br><span style=\"font-size:12px;color:#666;\">Profile Views</span></td><td style=\"width:2%\"></td>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + searchCount + '</strong><br><span style=\"font-size:12px;color:#666;\">Search Appearances</span></td><td style=\"width:2%\"></td>';\nh += '<td style=\"background:#eaf2f8;padding:12px;text-align:center;border-radius:4px;width:32%\"><strong style=\"font-size:24px;color:#1a5276;\">' + inmails.length + '</strong><br><span style=\"font-size:12px;color:#666;\">Messages</span></td>';\nh += '</tr></table>';\n\n// Recruiter Intel\nh += '<h2 style=\"color:#1a5276;margin-top:25px;\">Recruiter Intelligence</h2>';\nif (highPri.length > 0) {\n  h += '<div style=\"background:#fef9e7;border-left:4px solid #f39c12;padding:12px;margin:10px 0;\"><strong style=\"color:#e67e22;\">High Priority Viewers</strong>';\n  for (const v of highPri) {\n    h += '<p style=\"margin:8px 0;\">' + esc(v.viewer_name) + ' - ' + esc(v.viewer_title) + ' at ' + esc(v.viewer_company) + '</p>';\n  }\n  h += '</div>';\n}\nif (profileViews.length > 0) {\n  h += '<table style=\"width:100%;border-collapse:collapse;font-size:13px;margin:10px 0;\">';\n  h += '<tr style=\"background:#f1f1f1;\"><th style=\"padding:8px;text-align:left;\">Viewer</th><th style=\"padding:8px;text-align:left;\">Title</th><th style=\"padding:8px;text-align:left;\">Company</th></tr>';\n  for (const v of profileViews.slice(0, 10)) {\n    h += '<tr><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_name) + '</td><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_title) + '</td><td style=\"padding:6px;border-bottom:1px solid #eee;\">' + esc(v.viewer_company) + '</td></tr>';\n  }\n  h += '</table>';\n} else { h += '<p style=\"color:#888;\">No profile views this week.</p>'; }\n\n// Messages\nif (inmails.length > 0) {\n  h += '<h3 style=\"color:#2e86c1;\">Messages</h3>';\n  for (const m of inmails) {\n    const badge = (m.requires_response && !m.response_sent) ? ' <span style=\"background:#e74c3c;color:white;font-size:11px;padding:2px 6px;border-radius:3px;\">NEEDS REPLY</span>' : '';\n    h += '<div style=\"border-bottom:1px solid #eee;padding:8px 0;\"><strong>' + esc(m.sender_name) + '</strong> (' + esc(m.sender_company) + ')' + badge + '</div>';\n  }\n}\n\n// Connections\nif (connReqs.length > 0) {\n  h += '<h3 style=\"color:#2e86c1;\">Connection Requests (' + connReqs.length + ')</h3>';\n  h += '<table style=\"width:100%;border-collapse:collapse;font-size:13px;\">';\n  for (const c of connReqs) {\n    h += '<tr><td style=\"padding:5px;\">' + esc(c.requester_name) + '</td><td style=\"padding:5px;\">' + esc(c.requester_company) + '</td><td style=\"padding:5px;\">' + esc((c.action_recommended||'').replace(/_/g,' ')) + '</td></tr>';\n  }\n  h += '</table>';\n}\n\n// Content\nh += '<h2 style=\"color:#1a5276;margin-top:25px;\">Content Performance</h2>';\nif (published.length > 0) {\n  for (const c of published) { h += '<p><strong>' + esc(c.topic_title) + '</strong> <span style=\"color:#888;font-size:12px;\">' + esc((c.content_pillar||'').replace(/_/g,' ')) + '</span>' + (c.engagement_score ? ' <span style=\"background:#27ae60;color:white;font-size:11px;padding:2px 6px;border-radius:3px;\">Score: ' + c.engagement_score + '</span>' : '') + '</p>'; }\n} else { h += '<p style=\"color:#888;\">No published content in the past 2 weeks.</p>'; }\nif (drafted.length > 0) { h += '<p>' + drafted.length + ' draft(s) ready for review.</p>'; }\n\n// Alignment\nif (alignIssues.length > 0) {\n  h += '<h2 style=\"color:#1a5276;margin-top:25px;\">Profile-CV Alignment</h2>';\n  for (const a of alignIssues) {\n    const clr = a.critical_count > 0 ? '#e74c3c' : '#f39c12';\n    h += '<div style=\"border-left:3px solid ' + clr + ';padding:8px;margin:8px 0;\"><strong>' + esc(a.cv_target_role || a.cv_identifier) + '</strong> <span style=\"font-size:12px;\">' + a.critical_count + ' critical, ' + a.warning_count + ' warnings</span></div>';\n  }\n}\n\n// Actions\nh += '<h2 style=\"color:#1a5276;margin-top:25px;border-top:2px solid #1a5276;padding-top:15px;\">Recommended Actions</h2>';\nif (actions.length > 0) { h += '<ol style=\"padding-left:20px;\">'; for (const a of actions) { h += '<li style=\"margin:8px 0;\">' + esc(a) + '</li>'; } h += '</ol>'; }\nelse { h += '<p style=\"color:#27ae60;\">All clear this week.</p>'; }\n\nh += '<p style=\"color:#aaa;font-size:11px;margin-top:30px;text-align:center;\">Selvi Job App - Module 7 LinkedIn Intelligence</p></div>';\n\nreturn [{ json: { subject: 'LinkedIn Intelligence Digest - Week of ' + weekStartStr, html: h } }];"
+        },
+        "id": "compile",
+        "name": "Compile and Format",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          2160,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://api.resend.com/emails",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "Authorization",
+                "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"from\":\"jobs@apiloom.io\",\"to\":[\"{{ $('Loop Over Tenants').item.json.notification_email }}\"],\"subject\":\"\" + $json.subject + \"\",\"html\":\"\" + $json.html.replace(/\"/g, '\\\\\"') + \"\"}",
+          "options": {}
+        },
+        "id": "sendEmail",
+        "name": "Send Email",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          2380,
+          300
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          300
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          300
+        ]
+      }
+    ],
+    "connections": {
+      "Sunday 6PM": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q1 Profile Views": {
+        "main": [
+          [
+            {
+              "node": "Q2 InMails",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q2 InMails": {
+        "main": [
+          [
+            {
+              "node": "Q3 Connections",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q3 Connections": {
+        "main": [
+          [
+            {
+              "node": "Q4 Search",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q4 Search": {
+        "main": [
+          [
+            {
+              "node": "Q5 Content",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q5 Content": {
+        "main": [
+          [
+            {
+              "node": "Q6 Metrics",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q6 Metrics": {
+        "main": [
+          [
+            {
+              "node": "Q7 Alignment",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Q7 Alignment": {
+        "main": [
+          [
+            {
+              "node": "Compile and Format",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Compile and Format": {
+        "main": [
+          [
+            {
+              "node": "Send Email",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "Q1 Profile Views",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Send Email": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:36.916Z",
+        "id": 127,
+        "workflowId": "KBKhzcxNN9yXcX21",
+        "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:36.937Z",
+        "id": 128,
+        "workflowId": "KBKhzcxNN9yXcX21",
+        "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:20.248Z",
+        "id": 191,
+        "workflowId": "KBKhzcxNN9yXcX21",
+        "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:20.269Z",
+        "id": 192,
+        "workflowId": "KBKhzcxNN9yXcX21",
+        "versionId": "254d043c-4f09-43fa-b1bc-717598036ec9",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

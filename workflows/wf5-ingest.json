@@ -1,0 +1,365 @@
+{
+  "name": "WF5-INGEST: Email Ingestion (M5)",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 5 }
+          ]
+        }
+      },
+      "name": "Schedule Trigger",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 0],
+      "id": "wf5i-trigger"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO workflow_locks (workflow_name, locked_by, expires_at)\nVALUES ('WF5-INGEST', '{{ $executionId }}', NOW() + INTERVAL '10 minutes')\nON CONFLICT (workflow_name)\nDO UPDATE SET locked_at = NOW(), locked_by = '{{ $executionId }}', expires_at = NOW() + INTERVAL '10 minutes'\nWHERE workflow_locks.expires_at < NOW()\nRETURNING workflow_name;",
+        "options": {}
+      },
+      "name": "Acquire Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [220, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-lock"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "lock-check",
+              "leftValue": "={{ $json.workflow_name }}",
+              "rightValue": "WF5-INGEST",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Lock Acquired?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [440, 0],
+      "id": "wf5i-if-lock"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT value FROM system_config WHERE key = 'email_last_history_id';",
+        "options": {}
+      },
+      "name": "Get Last History ID",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, -100],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-get-history"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Gmail polling via IMAP-like approach using Gmail API search\n// Since we don't have Gmail OAuth2 set up yet, this node\n// prepares the Gmail API request parameters.\n// When Gmail OAuth2 is configured, replace the HTTP Request\n// node with a native Gmail node.\n\nconst lastHistoryId = $input.first().json.value || '0';\nconst now = new Date();\nconst hour = now.getUTCHours(); // Adjust for UK time\n\n// Determine polling window\n// Business hours: every 5 min, Off-hours: every 15 min\n// For now we always run since schedule handles frequency\n\n// Build Gmail search query for recent messages\n// Using 'after' with epoch timestamp for last 10 minutes\nconst tenMinAgo = Math.floor((now.getTime() - 10 * 60 * 1000) / 1000);\nconst searchQuery = `in:inbox after:${tenMinAgo}`;\n\nreturn [{\n  json: {\n    lastHistoryId,\n    searchQuery,\n    pollTimestamp: now.toISOString(),\n    note: 'Gmail OAuth2 credential must be configured manually in n8n. This workflow structure is ready but Gmail nodes need credential binding.'\n  }\n}];"
+      },
+      "name": "Prepare Gmail Query",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [880, -100],
+      "id": "wf5i-prep-query"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://gmail.googleapis.com/gmail/v1/users/me/messages",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "q", "value": "={{ $json.searchQuery }}" },
+            { "name": "maxResults", "value": "20" }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "name": "Gmail: List Messages",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1100, -100],
+      "id": "wf5i-gmail-list",
+      "onError": "continueRegularOutput",
+      "notes": "REQUIRES MANUAL SETUP: Gmail OAuth2 credential must be configured in n8n UI"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gmail list response and check for messages\nconst input = $input.first().json;\n\n// Handle case where Gmail credential is not configured yet\nif (input.error || !input.body || !input.body.messages) {\n  return [{ json: { hasMessages: false, messages: [], error: input.error || 'No messages or Gmail not configured' } }];\n}\n\nconst messages = input.body.messages || [];\nreturn [{ json: { hasMessages: messages.length > 0, messages, resultSizeEstimate: input.body.resultSizeEstimate || 0 } }];"
+      },
+      "name": "Parse Message List",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1320, -100],
+      "id": "wf5i-parse-list"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "has-msgs",
+              "leftValue": "={{ $json.hasMessages }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Messages Found?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, -100],
+      "id": "wf5i-if-msgs"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Split messages array into individual items for processing\nconst messages = $input.first().json.messages || [];\nreturn messages.map(m => ({ json: { messageId: m.id, threadId: m.threadId } }));"
+      },
+      "name": "Split Messages",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1760, -200],
+      "id": "wf5i-split"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=https://gmail.googleapis.com/gmail/v1/users/me/messages/{{ $json.messageId }}",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            { "name": "format", "value": "full" }
+          ]
+        },
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "gmailOAuth2",
+        "options": {
+          "response": { "response": { "fullResponse": true } }
+        }
+      },
+      "name": "Gmail: Get Message",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1980, -200],
+      "id": "wf5i-gmail-get",
+      "onError": "continueRegularOutput",
+      "notes": "REQUIRES MANUAL SETUP: Gmail OAuth2 credential"
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Gmail message into structured email data\nconst msg = $input.first().json;\n\nif (!msg.body || !msg.body.payload) {\n  return [{ json: { error: 'Could not parse message', skip: true } }];\n}\n\nconst payload = msg.body.payload;\nconst headers = payload.headers || [];\n\n// Helper to get header value\nconst getHeader = (name) => {\n  const h = headers.find(h => h.name.toLowerCase() === name.toLowerCase());\n  return h ? h.value : null;\n};\n\n// Extract email address from \"Name <email>\" format\nconst extractEmail = (raw) => {\n  if (!raw) return null;\n  const match = raw.match(/<([^>]+)>/);\n  return match ? match[1] : raw;\n};\n\nconst extractName = (raw) => {\n  if (!raw) return null;\n  const match = raw.match(/^\"?([^\"<]+)\"?\\s*</);\n  return match ? match[1].trim() : null;\n};\n\n// Extract body parts\nlet bodyPlain = '';\nlet bodyHtml = '';\n\nconst extractParts = (part) => {\n  if (part.mimeType === 'text/plain' && part.body && part.body.data) {\n    bodyPlain = Buffer.from(part.body.data, 'base64url').toString('utf-8');\n  }\n  if (part.mimeType === 'text/html' && part.body && part.body.data) {\n    bodyHtml = Buffer.from(part.body.data, 'base64url').toString('utf-8');\n  }\n  if (part.parts) {\n    part.parts.forEach(extractParts);\n  }\n};\nextractParts(payload);\n\n// Strip HTML for classification\nlet bodyStripped = bodyHtml\n  .replace(/<style[^>]*>[\\s\\S]*?<\\/style>/gi, '')\n  .replace(/<script[^>]*>[\\s\\S]*?<\\/script>/gi, '')\n  .replace(/<[^>]+>/g, ' ')\n  .replace(/&nbsp;/g, ' ')\n  .replace(/&amp;/g, '&')\n  .replace(/&lt;/g, '<')\n  .replace(/&gt;/g, '>')\n  .replace(/\\s+/g, ' ')\n  .trim();\n\nif (!bodyStripped && bodyPlain) bodyStripped = bodyPlain;\n\n// Truncate for storage (keep first 10000 chars)\nbodyStripped = bodyStripped.substring(0, 10000);\n\nconst fromRaw = getHeader('From');\nconst subject = getHeader('Subject') || '(no subject)';\nconst date = getHeader('Date');\nconst isReply = subject.toLowerCase().startsWith('re:') || !!getHeader('In-Reply-To');\n\n// Check attachments\nconst attachmentTypes = [];\nlet hasIcs = false;\nconst checkAttachments = (part) => {\n  if (part.filename && part.filename.length > 0) {\n    attachmentTypes.push(part.mimeType);\n    if (part.mimeType === 'application/ics' || part.filename.endsWith('.ics')) {\n      hasIcs = true;\n    }\n  }\n  if (part.parts) part.parts.forEach(checkAttachments);\n};\ncheckAttachments(payload);\n\n// Simple language detection (check for non-ASCII heavy content)\nlet detectedLanguage = 'en';\nlet languageConfidence = 0.9;\nconst nonAsciiRatio = (bodyStripped.replace(/[\\x00-\\x7F]/g, '').length) / Math.max(bodyStripped.length, 1);\nif (nonAsciiRatio > 0.3) {\n  detectedLanguage = 'unknown';\n  languageConfidence = 0.5;\n}\n\nconst gmailLabels = msg.body.labelIds || [];\n\nreturn [{\n  json: {\n    skip: false,\n    gmail_message_id: msg.body.id,\n    gmail_thread_id: msg.body.threadId,\n    subject,\n    from_email: extractEmail(fromRaw),\n    from_name: extractName(fromRaw),\n    to_email: 'chellamma.uk@gmail.com',\n    reply_to: getHeader('Reply-To'),\n    date: date ? new Date(date).toISOString() : new Date().toISOString(),\n    snippet: (msg.body.snippet || '').substring(0, 500),\n    body_plain: bodyPlain.substring(0, 50000),\n    body_html: bodyHtml.substring(0, 100000),\n    body_stripped: bodyStripped,\n    has_attachments: attachmentTypes.length > 0,\n    attachment_types: attachmentTypes,\n    has_ics_attachment: hasIcs,\n    is_reply: isReply,\n    in_reply_to: getHeader('In-Reply-To'),\n    references_header: getHeader('References'),\n    gmail_labels: gmailLabels,\n    gmail_internal_date: msg.body.internalDate ? new Date(parseInt(msg.body.internalDate)).toISOString() : null,\n    detected_language: detectedLanguage,\n    language_confidence: languageConfidence\n  }\n}];"
+      },
+      "name": "Parse Email Message",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2200, -200],
+      "id": "wf5i-parse-email"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "leftValue": "", "typeValidation": "strict" },
+          "conditions": [
+            {
+              "id": "is-english",
+              "leftValue": "={{ $json.detected_language }}",
+              "rightValue": "en",
+              "operator": { "type": "string", "operation": "equals" }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "name": "Is English?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2420, -200],
+      "id": "wf5i-if-english"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO emails (\n    gmail_message_id, gmail_thread_id, subject,\n    from_email, from_name, to_email, reply_to, date,\n    snippet, body_plain, body_html, body_stripped,\n    has_attachments, attachment_types, has_ics_attachment,\n    is_reply, in_reply_to, references_header,\n    gmail_labels, gmail_internal_date,\n    detected_language, language_confidence,\n    status\n) VALUES (\n    '{{ $json.gmail_message_id }}',\n    '{{ $json.gmail_thread_id }}',\n    $1,\n    '{{ $json.from_email }}',\n    $2,\n    '{{ $json.to_email }}',\n    '{{ $json.reply_to }}',\n    '{{ $json.date }}'::timestamptz,\n    $3,\n    $4, $5, $6,\n    {{ $json.has_attachments }},\n    '{{ JSON.stringify($json.attachment_types) }}'::jsonb,\n    {{ $json.has_ics_attachment }},\n    {{ $json.is_reply }},\n    '{{ $json.in_reply_to }}',\n    '{{ $json.references_header }}',\n    '{{ JSON.stringify($json.gmail_labels) }}'::jsonb,\n    {{ $json.gmail_internal_date ? \"'\" + $json.gmail_internal_date + \"'::timestamptz\" : 'NULL' }},\n    '{{ $json.detected_language }}',\n    {{ $json.language_confidence }},\n    'ingested'\n)\nON CONFLICT (gmail_message_id) DO NOTHING\nRETURNING id;",
+        "options": {}
+      },
+      "name": "Insert Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2640, -300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-insert-email"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_threads (gmail_thread_id, subject, last_received_at, last_activity_at)\nVALUES (\n    '{{ $('Parse Email Message').item.json.gmail_thread_id }}',\n    '{{ $('Parse Email Message').item.json.subject.substring(0, 1000).replace(/'/g, \"''\") }}',\n    NOW(), NOW()\n)\nON CONFLICT (gmail_thread_id) DO UPDATE\n    SET message_count = email_threads.message_count + 1,\n        last_received_at = NOW(),\n        last_activity_at = NOW();",
+        "options": {}
+      },
+      "name": "Upsert Thread",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2860, -300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-upsert-thread"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_processing_log (email_id, workflow_name, step, status, details)\nSELECT id, 'WF5-INGEST', 'ingestion', 'completed',\n    json_build_object('from', '{{ $('Parse Email Message').item.json.from_email }}', 'subject', '{{ $('Parse Email Message').item.json.subject.substring(0, 200).replace(/'/g, \"''\") }}')\nFROM emails WHERE gmail_message_id = '{{ $('Parse Email Message').item.json.gmail_message_id }}';",
+        "options": {}
+      },
+      "name": "Log Ingestion",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3080, -300],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-log"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO emails (\n    gmail_message_id, gmail_thread_id, subject,\n    from_email, from_name, to_email, date,\n    snippet, detected_language, language_confidence,\n    status\n) VALUES (\n    '{{ $json.gmail_message_id }}',\n    '{{ $json.gmail_thread_id }}',\n    '{{ $json.subject.substring(0, 1000).replace(/'/g, \"''\") }}',\n    '{{ $json.from_email }}',\n    '{{ ($json.from_name || \"\").replace(/'/g, \"''\") }}',\n    '{{ $json.to_email }}',\n    '{{ $json.date }}'::timestamptz,\n    '{{ ($json.snippet || \"\").substring(0, 500).replace(/'/g, \"''\") }}',\n    '{{ $json.detected_language }}',\n    {{ $json.language_confidence }},\n    'skipped'\n)\nON CONFLICT (gmail_message_id) DO NOTHING;",
+        "options": {}
+      },
+      "name": "Insert Skipped Email",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2640, -100],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-insert-skipped"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "DELETE FROM workflow_locks WHERE workflow_name = 'WF5-INGEST';",
+        "options": {}
+      },
+      "name": "Release Lock",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [3300, 0],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-release"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO email_processing_log (workflow_name, step, status, details)\nVALUES ('WF5-INGEST', 'skipped', 'skipped', '{\"reason\": \"lock not acquired\"}'::jsonb);",
+        "options": {}
+      },
+      "name": "Log Lock Skip",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [660, 100],
+      "credentials": {
+        "postgres": { "id": "uAbCv6KI1KdUiMtX", "name": "Selvi Jobs DB" }
+      },
+      "id": "wf5i-log-skip"
+    },
+    {
+      "parameters": {},
+      "name": "No Messages",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1760, 0],
+      "id": "wf5i-noop"
+    }
+  ],
+  "connections": {
+    "Schedule Trigger": {
+      "main": [[{"node": "Acquire Lock", "type": "main", "index": 0}]]
+    },
+    "Acquire Lock": {
+      "main": [[{"node": "Lock Acquired?", "type": "main", "index": 0}]]
+    },
+    "Lock Acquired?": {
+      "main": [
+        [{"node": "Get Last History ID", "type": "main", "index": 0}],
+        [{"node": "Log Lock Skip", "type": "main", "index": 0}]
+      ]
+    },
+    "Get Last History ID": {
+      "main": [[{"node": "Prepare Gmail Query", "type": "main", "index": 0}]]
+    },
+    "Prepare Gmail Query": {
+      "main": [[{"node": "Gmail: List Messages", "type": "main", "index": 0}]]
+    },
+    "Gmail: List Messages": {
+      "main": [[{"node": "Parse Message List", "type": "main", "index": 0}]]
+    },
+    "Parse Message List": {
+      "main": [[{"node": "Messages Found?", "type": "main", "index": 0}]]
+    },
+    "Messages Found?": {
+      "main": [
+        [{"node": "Split Messages", "type": "main", "index": 0}],
+        [{"node": "No Messages", "type": "main", "index": 0}]
+      ]
+    },
+    "Split Messages": {
+      "main": [[{"node": "Gmail: Get Message", "type": "main", "index": 0}]]
+    },
+    "Gmail: Get Message": {
+      "main": [[{"node": "Parse Email Message", "type": "main", "index": 0}]]
+    },
+    "Parse Email Message": {
+      "main": [[{"node": "Is English?", "type": "main", "index": 0}]]
+    },
+    "Is English?": {
+      "main": [
+        [{"node": "Insert Email", "type": "main", "index": 0}],
+        [{"node": "Insert Skipped Email", "type": "main", "index": 0}]
+      ]
+    },
+    "Insert Email": {
+      "main": [[{"node": "Upsert Thread", "type": "main", "index": 0}]]
+    },
+    "Upsert Thread": {
+      "main": [[{"node": "Log Ingestion", "type": "main", "index": 0}]]
+    },
+    "Log Ingestion": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    },
+    "Insert Skipped Email": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    },
+    "No Messages": {
+      "main": [[{"node": "Release Lock", "type": "main", "index": 0}]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London"
+  }
+}

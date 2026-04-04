@@ -1,0 +1,561 @@
+{
+  "name": "WF-AP1: Application Router",
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "cronExpression",
+              "expression": "*/15 7-22 * * *"
+            }
+          ]
+        }
+      },
+      "id": "schedule-trigger",
+      "name": "Every 15 Min (7AM-10PM)",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [0, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT COALESCE((config_value->>'system_paused')::boolean, false) AS paused FROM application_config WHERE config_key = 'auto_apply_rules' LIMIT 1",
+        "options": {}
+      },
+      "id": "check-paused",
+      "name": "Check System Paused",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [240, 300],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "paused-check",
+              "leftValue": "={{ $json.paused }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "notEquals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-not-paused",
+      "name": "System Active?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [460, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT j.id AS job_id, j.title, j.company, j.location, j.url,\n       j.description, j.tier, j.composite_score, j.job_type,\n       j.application_method, j.application_email,\n       j.cv_file_path, j.cl_file_path,\n       j.metadata, j.closing_date\nFROM jobs j\nWHERE j.ready_to_apply = true\n  AND j.tier IN ('A+', 'A', 'B')\n  AND (j.closing_date IS NULL OR j.closing_date >= CURRENT_DATE)\n  AND j.id NOT IN (\n      SELECT job_id FROM applications\n      WHERE status NOT IN ('failed', 'expired', 'withdrawn')\n  )\nORDER BY\n  CASE WHEN j.closing_date IS NOT NULL AND j.closing_date <= CURRENT_DATE + 2\n       THEN 0 ELSE 1 END,\n  CASE j.tier WHEN 'A+' THEN 1 WHEN 'A' THEN 2 WHEN 'B' THEN 3 END,\n  j.composite_score DESC\nLIMIT 10",
+        "options": {}
+      },
+      "id": "fetch-ready-jobs",
+      "name": "Fetch Ready Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [680, 200],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "has-jobs",
+              "leftValue": "={{ $json.job_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "string",
+                "operation": "isNotEmpty"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-has-jobs",
+      "name": "Has Jobs?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [900, 200]
+    },
+    {
+      "parameters": {
+        "options": {
+          "reset": false
+        },
+        "batchSize": 1
+      },
+      "id": "split-batches",
+      "name": "Split In Batches",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [1120, 100]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Application method detection logic\nconst job = $input.first().json;\nconst url = (job.url || '').toLowerCase();\nconst description = (job.description || '').toLowerCase();\nconst appMethod = (job.application_method || '').toLowerCase();\nconst appEmail = job.application_email || '';\n\nlet method = 'unknown';\nlet confidence = 0;\nlet email_address = null;\nlet portal_url = job.url || null;\nlet portal_type = null;\n\n// --- 1. If Module 1/2 already set application_email, trust it ---\nif (appEmail && appEmail.includes('@')) {\n  method = 'email';\n  confidence = 0.95;\n  email_address = appEmail;\n}\n\n// --- 2. Portal URL pattern matching ---\nconst portalPatterns = [\n  { re: /workday\\.com|myworkdayjobs\\.com|wd\\d+\\.myworkday/, method: 'portal_workday', conf: 0.95 },\n  { re: /taleo\\.net|oracle\\.com.*talent|oraclecloud\\.com.*recruit/, method: 'portal_taleo', conf: 0.95 },\n  { re: /successfactors\\.com|sap\\.com.*recruit/, method: 'portal_successfactors', conf: 0.95 },\n  { re: /stonefish\\.co\\.uk|stonefish\\.software/, method: 'portal_stonefish', conf: 0.95 },\n  { re: /jobtrain\\.co\\.uk/, method: 'portal_jobtrain', conf: 0.95 },\n  { re: /oleeo\\.com/, method: 'portal_oleeo', conf: 0.95 },\n  { re: /tribepad\\.com/, method: 'portal_tribepad', conf: 0.95 },\n  { re: /eploy\\.co\\.uk|eploy\\.net/, method: 'portal_eploy', conf: 0.95 },\n  { re: /icims\\.com/, method: 'portal_icims', conf: 0.95 },\n  { re: /greenhouse\\.io/, method: 'portal_greenhouse', conf: 0.95 },\n  { re: /lever\\.co/, method: 'portal_lever', conf: 0.95 },\n  { re: /smartrecruiters\\.com/, method: 'portal_smartrecruiters', conf: 0.95 },\n  { re: /workable\\.com/, method: 'portal_workable', conf: 0.95 },\n  { re: /linkedin\\.com\\/jobs.*applyOnCompany|linkedin\\.com.*easy-apply/, method: 'linkedin_easy_apply', conf: 0.90 },\n  { re: /indeed\\.co\\.uk\\/apply|indeed\\.com\\/apply|indeed\\.co\\.uk.*vjk=/, method: 'indeed_apply', conf: 0.90 },\n  { re: /reed\\.co\\.uk\\/jobs.*apply/, method: 'portal_reed', conf: 0.85 },\n  { re: /totaljobs\\.com\\/apply/, method: 'portal_totaljobs', conf: 0.85 },\n  { re: /civilservicejobs\\.service\\.gov\\.uk/, method: 'portal_civil_service', conf: 0.95 },\n  { re: /jobs\\.nhs\\.uk/, method: 'portal_nhs', conf: 0.95 },\n  { re: /jobs\\.ac\\.uk/, method: 'portal_jobs_ac_uk', conf: 0.90 }\n];\n\nif (method === 'unknown') {\n  for (const p of portalPatterns) {\n    if (p.re.test(url)) {\n      method = p.method;\n      confidence = p.conf;\n      portal_type = p.method.replace('portal_', '');\n      break;\n    }\n  }\n}\n\n// --- 3. Email extraction from description ---\nif (method === 'unknown') {\n  // Strong context: \"send CV to email@example.com\"\n  const descRaw = job.description || '';\n  const strongEmail = descRaw.match(/(?:send|email|submit|forward|apply).*?(?:cv|resume|application).*?(?:to|at)\\s+([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+)/i);\n  if (strongEmail) {\n    method = 'email';\n    confidence = 0.90;\n    email_address = strongEmail[1];\n  } else {\n    // Weaker: just an email found\n    const weakEmail = descRaw.match(/([a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\\.[a-zA-Z0-9-.]+)/i);\n    if (weakEmail) {\n      const addr = weakEmail[1].toLowerCase();\n      const recruitPrefixes = ['careers', 'recruitment', 'hr', 'hiring', 'talent', 'people', 'jobs', 'apply', 'vacancies'];\n      const isRecruitEmail = recruitPrefixes.some(p => addr.startsWith(p + '@'));\n      if (isRecruitEmail) {\n        method = 'email';\n        confidence = 0.80;\n        email_address = addr;\n      } else {\n        method = 'email';\n        confidence = 0.50;\n        email_address = addr;\n      }\n    }\n  }\n}\n\n// --- 4. Check application_method field from Module 1 ---\nif (method === 'unknown' && appMethod) {\n  if (appMethod.includes('email')) {\n    method = 'email';\n    confidence = 0.60;\n  } else if (appMethod.includes('portal') || appMethod.includes('apply online')) {\n    method = 'portal_generic';\n    confidence = 0.60;\n    portal_type = 'generic';\n  }\n}\n\nreturn [{\n  json: {\n    ...job,\n    detected_method: method,\n    method_confidence: confidence,\n    detected_email: email_address,\n    detected_portal_url: portal_url,\n    detected_portal_type: portal_type,\n    needs_ai_analysis: (confidence < 0.7 && method !== 'email')\n  }\n}];"
+      },
+      "id": "method-detect",
+      "name": "Detect Application Method",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [1340, 100]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "needs-ai",
+              "leftValue": "={{ $json.needs_ai_analysis }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-needs-ai",
+      "name": "Needs AI Analysis?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1560, 100]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"claude-3-5-haiku-latest\",\"max_tokens\":300,\"messages\":[{\"role\":\"user\",\"content\":\"Analyze this job posting and determine the application method. The job URL is: {{ $json.url }}\\n\\nJob Title: {{ $json.title }}\\nCompany: {{ $json.company }}\\nDescription excerpt: {{ ($json.description || '').substring(0, 2000) }}\\n\\nDetermine: How should someone apply for this job? Options: email, portal_workday, portal_taleo, portal_stonefish, portal_jobtrain, portal_generic, linkedin_easy_apply, indeed_apply, unknown.\\n\\nRespond ONLY with JSON:\\n{\\\"method\\\": \\\"one_of_the_above\\\", \\\"confidence\\\": 0.0-1.0, \\\"email_address\\\": \\\"if email method or null\\\", \\\"portal_type\\\": \\\"if portal or null\\\", \\\"reasoning\\\": \\\"one sentence\\\"}\"}]}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "ai-method-analysis",
+      "name": "AI Method Analysis",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1780, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Merge AI analysis with rule-based detection\nconst aiResponse = $input.first().json;\nlet aiResult = {};\n\ntry {\n  const content = aiResponse.content && aiResponse.content[0] && aiResponse.content[0].text;\n  if (content) {\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    if (jsonMatch) {\n      aiResult = JSON.parse(jsonMatch[0]);\n    }\n  }\n} catch (e) {\n  // AI parse failed, stick with rule-based\n}\n\n// Get the original job data from the method detection node\nconst prevData = $('Detect Application Method').first().json;\n\nlet finalMethod = prevData.detected_method;\nlet finalConfidence = prevData.method_confidence;\nlet finalEmail = prevData.detected_email;\nlet finalPortalType = prevData.detected_portal_type;\nlet finalPortalUrl = prevData.detected_portal_url;\n\nif (aiResult.confidence && aiResult.confidence > finalConfidence) {\n  finalMethod = aiResult.method || finalMethod;\n  finalConfidence = aiResult.confidence;\n  if (aiResult.email_address && aiResult.email_address !== 'if email method or null' && aiResult.email_address !== null) {\n    finalEmail = aiResult.email_address;\n  }\n  if (aiResult.portal_type && aiResult.portal_type !== 'if portal or null' && aiResult.portal_type !== null) {\n    finalPortalType = aiResult.portal_type;\n  }\n}\n\nreturn [{\n  json: {\n    ...prevData,\n    detected_method: finalMethod,\n    method_confidence: finalConfidence,\n    detected_email: finalEmail,\n    detected_portal_url: finalPortalUrl,\n    detected_portal_type: finalPortalType,\n    ai_analysis_used: true\n  }\n}];"
+      },
+      "id": "merge-ai-result",
+      "name": "Merge AI Result",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 0]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Pass through -- no AI needed (already high confidence)\nconst job = $input.first().json;\nreturn [{ json: { ...job, ai_analysis_used: false } }];"
+      },
+      "id": "skip-ai",
+      "name": "Skip AI (High Confidence)",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [2000, 200]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO applications (\n  job_id, company_name, job_title, pipeline_track,\n  current_state, application_method,\n  status, method, method_confidence, method_detected_at,\n  tier, composite_score, application_type,\n  application_email, portal_url, portal_type\n)\nVALUES (\n  '{{ $json.job_id }}',\n  '{{ ($json.company || \"Unknown\").replace(/'/g, \"''\") }}',\n  '{{ ($json.title || \"Unknown\").replace(/'/g, \"''\") }}',\n  'corporate',\n  'discovered',\n  '{{ $json.detected_method === \"email\" ? \"auto_apply\" : \"manual_portal\" }}',\n  'method_detected',\n  '{{ $json.detected_method }}',\n  {{ $json.method_confidence }},\n  NOW(),\n  '{{ $json.tier }}',\n  {{ $json.composite_score || 0 }},\n  'direct',\n  {{ $json.detected_email ? \"'\" + $json.detected_email.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  {{ $json.detected_portal_url ? \"'\" + $json.detected_portal_url.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  {{ $json.detected_portal_type ? \"'\" + $json.detected_portal_type.replace(/'/g, \"''\") + \"'\" : 'NULL' }}\n)\nRETURNING id AS application_id, job_id, method, tier",
+        "options": {}
+      },
+      "id": "create-application",
+      "name": "Create Application Record",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2220, 100],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.method }}",
+                    "rightValue": "email",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputIndex": 0
+            },
+            {
+              "conditions": {
+                "combinator": "or",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.method }}",
+                    "rightValue": "portal_",
+                    "operator": {
+                      "type": "string",
+                      "operation": "startsWith"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.method }}",
+                    "rightValue": "linkedin_easy_apply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  },
+                  {
+                    "leftValue": "={{ $json.method }}",
+                    "rightValue": "indeed_apply",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputIndex": 1
+            },
+            {
+              "conditions": {
+                "combinator": "and",
+                "conditions": [
+                  {
+                    "leftValue": "={{ $json.method }}",
+                    "rightValue": "unknown",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    }
+                  }
+                ]
+              },
+              "outputIndex": 2
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "id": "route-by-method",
+      "name": "Route by Method",
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.2,
+      "position": [2440, 100]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE applications SET status = 'email_ready' WHERE id = '{{ $json.application_id }}'",
+        "options": {}
+      },
+      "id": "route-email",
+      "name": "Route: Email Engine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2700, -100],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE applications SET status = 'portal_task_ready' WHERE id = '{{ $json.application_id }}'",
+        "options": {}
+      },
+      "id": "route-portal",
+      "name": "Route: Portal Engine",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2700, 100],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "UPDATE applications SET status = 'unknown', method = 'unknown' WHERE id = '{{ $json.application_id }}'",
+        "options": {}
+      },
+      "id": "route-unknown-db",
+      "name": "Flag Unknown Method",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [2700, 300],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.resend.com/emails",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer re_PMdG3JAg_Er4o7VYY74tek5WzMqmqBJ15"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"from\":\"Selvi Jobs <jobs@apiloom.io>\",\"to\":[\"chellamma.uk@gmail.com\"],\"subject\":\"[Auto-Apply] Unknown method: {{ $('Detect Application Method').first().json.title }} at {{ $('Detect Application Method').first().json.company }}\",\"text\":\"The application router could not determine the application method for:\\n\\nJob: {{ $('Detect Application Method').first().json.title }}\\nCompany: {{ $('Detect Application Method').first().json.company }}\\nURL: {{ $('Detect Application Method').first().json.url }}\\nDetected method: {{ $('Detect Application Method').first().json.detected_method }}\\nConfidence: {{ $('Detect Application Method').first().json.method_confidence }}\\n\\nPlease classify this manually.\"}",
+        "options": {
+          "timeout": 10000
+        }
+      },
+      "id": "notify-unknown",
+      "name": "Notify: Unknown Method",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [2940, 300]
+    },
+    {
+      "parameters": {},
+      "id": "stop-paused",
+      "name": "Stop (Paused)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [680, 400]
+    },
+    {
+      "parameters": {},
+      "id": "stop-no-jobs",
+      "name": "Stop (No Jobs)",
+      "type": "n8n-nodes-base.noOp",
+      "typeVersion": 1,
+      "position": [1120, 300]
+    }
+  ],
+  "connections": {
+    "Every 15 Min (7AM-10PM)": {
+      "main": [
+        [
+          { "node": "Check System Paused", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Check System Paused": {
+      "main": [
+        [
+          { "node": "System Active?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "System Active?": {
+      "main": [
+        [
+          { "node": "Fetch Ready Jobs", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Stop (Paused)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Fetch Ready Jobs": {
+      "main": [
+        [
+          { "node": "Has Jobs?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Has Jobs?": {
+      "main": [
+        [
+          { "node": "Split In Batches", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Stop (No Jobs)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Split In Batches": {
+      "main": [
+        [
+          { "node": "Detect Application Method", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Detect Application Method": {
+      "main": [
+        [
+          { "node": "Needs AI Analysis?", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Needs AI Analysis?": {
+      "main": [
+        [
+          { "node": "AI Method Analysis", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Skip AI (High Confidence)", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "AI Method Analysis": {
+      "main": [
+        [
+          { "node": "Merge AI Result", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Merge AI Result": {
+      "main": [
+        [
+          { "node": "Create Application Record", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Skip AI (High Confidence)": {
+      "main": [
+        [
+          { "node": "Create Application Record", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Create Application Record": {
+      "main": [
+        [
+          { "node": "Route by Method", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Route by Method": {
+      "main": [
+        [
+          { "node": "Route: Email Engine", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Route: Portal Engine", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Flag Unknown Method", "type": "main", "index": 0 }
+        ],
+        [
+          { "node": "Split In Batches", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Route: Email Engine": {
+      "main": [
+        [
+          { "node": "Split In Batches", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Route: Portal Engine": {
+      "main": [
+        [
+          { "node": "Split In Batches", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Flag Unknown Method": {
+      "main": [
+        [
+          { "node": "Notify: Unknown Method", "type": "main", "index": 0 }
+        ]
+      ]
+    },
+    "Notify: Unknown Method": {
+      "main": [
+        [
+          { "node": "Split In Batches", "type": "main", "index": 0 }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "Europe/London"
+  }
+}

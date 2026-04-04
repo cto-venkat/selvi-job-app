@@ -1,0 +1,969 @@
+{
+  "updatedAt": "2026-04-04T21:23:52.244Z",
+  "createdAt": "2026-03-29T11:29:55.398Z",
+  "id": "1UpSvlEjPCdsZQsg",
+  "name": "WF1: RSS Poller",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "hours",
+              "hoursInterval": 2
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Every 2 Hours",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "url": "https://www.jobs.ac.uk/search/rss?keywords=learning+development&location=south+east+england"
+      },
+      "id": "rss1",
+      "name": "jobs.ac.uk L&D",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        -200
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.jobs.ac.uk/search/rss?keywords=lecturer+human+resource+management"
+      },
+      "id": "rss2",
+      "name": "jobs.ac.uk HRM",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        -100
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.jobs.ac.uk/search/rss?keywords=organisational+behaviour+lecturer"
+      },
+      "id": "rss3",
+      "name": "jobs.ac.uk OB",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        0
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jobs.theguardian.com/jobs/rss/?keywords=learning+development&location=south+east+england"
+      },
+      "id": "rss4",
+      "name": "Guardian L&D",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        100
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://jobs.theguardian.com/jobs/human-resources/rss/"
+      },
+      "id": "rss5",
+      "name": "Guardian HR",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        200
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.cv-library.co.uk/rss/jobs?q=learning+development+manager&geo=maidenhead&distance=25"
+      },
+      "id": "rss6",
+      "name": "CV-Library L&D",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        300
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.civilservicejobs.service.gov.uk/csr/index.cgi?SID=c3RhdGU9cm91dGluZQ==&pageaction=rss&keyword=learning+development"
+      },
+      "id": "rss7",
+      "name": "Civil Service L&D",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        400
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.jobs.nhs.uk/xi/vacancy/rss/?keyword=learning+development"
+      },
+      "id": "rss8",
+      "name": "NHS L&D",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        500
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "url": "https://www.jobs.nhs.uk/xi/vacancy/rss/?keyword=organisational+development"
+      },
+      "id": "rss9",
+      "name": "NHS OD",
+      "type": "n8n-nodes-base.rssFeedRead",
+      "typeVersion": 1,
+      "position": [
+        650,
+        600
+      ],
+      "continueOnFail": true,
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "mode": "append"
+      },
+      "id": "merge",
+      "name": "Merge All",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3,
+      "position": [
+        900,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Simple hash function (crypto module not available in sandbox)\nfunction simpleHash(str) { let h = 0; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h = ((h << 5) - h) + c; h |= 0; } return Math.abs(h).toString(16).padStart(8, '0'); }\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nreturn items.map(item => {\n  const d = item.json;\n  const title = (d.title || '').trim();\n  const link = d.link || d.guid || '';\n  const desc = (d.content || d.contentSnippet || d.description || '').replace(/<[^>]*>/g, '').substring(0, 5000);\n  const pubDate = d.isoDate || d.pubDate || null;\n  \n  // Try to extract company from dc:creator or first line of description\n  const company = d['dc:creator'] || d.creator || 'Unknown';\n  \n  // Try to extract location\n  let location = d['dc:location'] || 'UK';\n  \n  // Source detection\n  let source = 'rss';\n  if (link.includes('jobs.ac.uk')) source = 'jobs_ac_uk';\n  else if (link.includes('theguardian')) source = 'guardian';\n  else if (link.includes('cv-library')) source = 'cv_library';\n  else if (link.includes('civilservicejobs')) source = 'civil_service';\n  else if (link.includes('nhs.uk')) source = 'nhs_jobs';\n  \n  const sourceId = link.split('/').filter(Boolean).pop() || simpleHash(link);\n  \n  const dedupStr = `${title.toLowerCase()}|${company.toLowerCase()}|${location.toLowerCase()}`;\n  const dedupHash = simpleHash(dedupStr);\n  \n  const academicKw = ['lecturer', 'professor', 'teaching fellow', 'senior lecturer', 'reader'];\n  const jobType = academicKw.some(k => title.toLowerCase().includes(k)) ? 'academic' : 'corporate';\n  \n  return {\n    json: {\n      title, company, location, description: desc, url: link,\n      posted_at: pubDate, source, source_id: sourceId,\n      salary_raw: d['dc:salary'] || null,\n      salary_min: null, salary_max: null,\n      contract_type: null, work_type: null,\n      job_type: jobType, dedup_hash: dedupHash\n    }\n  };\n}).filter(item => item.json.title && item.json.url);"
+      },
+      "id": "normalize",
+      "name": "Normalize RSS",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1120,
+        200
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO jobs (tenant_id, title, company, location, salary_raw, description, url, posted_at, source_health, job_type, dedup_hash, status) SELECT '{{ $('Loop Over Tenants').item.json.tenant_id }}',$1,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9,$10,'raw' WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND dedup_hash = $10 AND is_duplicate = false)",
+        "options": {}
+      },
+      "id": "upsert",
+      "name": "Upsert Jobs",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1340,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO source_health (tenant_id, source, status, jobs_found) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', 'rss_poller', 'ok', 0)",
+        "options": {}
+      },
+      "id": "health",
+      "name": "Log Health",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1560,
+        200
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 2 Hours": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "jobs.ac.uk L&D": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "jobs.ac.uk HRM": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "jobs.ac.uk OB": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardian L&D": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Guardian HR": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "CV-Library L&D": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Civil Service L&D": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NHS L&D": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "NHS OD": {
+      "main": [
+        [
+          {
+            "node": "Merge All",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge All": {
+      "main": [
+        [
+          {
+            "node": "Normalize RSS",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize RSS": {
+      "main": [
+        [
+          {
+            "node": "Upsert Jobs",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Upsert Jobs": {
+      "main": [
+        [
+          {
+            "node": "Log Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "jobs.ac.uk L&D",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Log Health": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 2 Hours": {
+      "recurrenceRules": [
+        20
+      ]
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+  "activeVersionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+  "versionCounter": 106,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T11:29:55.398Z",
+      "createdAt": "2026-03-29T11:29:55.398Z",
+      "role": "workflow:owner",
+      "workflowId": "1UpSvlEjPCdsZQsg",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-04-04T21:23:52.245Z",
+    "createdAt": "2026-04-04T21:23:52.245Z",
+    "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+    "workflowId": "1UpSvlEjPCdsZQsg",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "hours",
+                "hoursInterval": 2
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Every 2 Hours",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "url": "https://www.jobs.ac.uk/search/rss?keywords=learning+development&location=south+east+england"
+        },
+        "id": "rss1",
+        "name": "jobs.ac.uk L&D",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          -200
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.jobs.ac.uk/search/rss?keywords=lecturer+human+resource+management"
+        },
+        "id": "rss2",
+        "name": "jobs.ac.uk HRM",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          -100
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.jobs.ac.uk/search/rss?keywords=organisational+behaviour+lecturer"
+        },
+        "id": "rss3",
+        "name": "jobs.ac.uk OB",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          0
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://jobs.theguardian.com/jobs/rss/?keywords=learning+development&location=south+east+england"
+        },
+        "id": "rss4",
+        "name": "Guardian L&D",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          100
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://jobs.theguardian.com/jobs/human-resources/rss/"
+        },
+        "id": "rss5",
+        "name": "Guardian HR",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          200
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.cv-library.co.uk/rss/jobs?q=learning+development+manager&geo=maidenhead&distance=25"
+        },
+        "id": "rss6",
+        "name": "CV-Library L&D",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          300
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.civilservicejobs.service.gov.uk/csr/index.cgi?SID=c3RhdGU9cm91dGluZQ==&pageaction=rss&keyword=learning+development"
+        },
+        "id": "rss7",
+        "name": "Civil Service L&D",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          400
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.jobs.nhs.uk/xi/vacancy/rss/?keyword=learning+development"
+        },
+        "id": "rss8",
+        "name": "NHS L&D",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          500
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "url": "https://www.jobs.nhs.uk/xi/vacancy/rss/?keyword=organisational+development"
+        },
+        "id": "rss9",
+        "name": "NHS OD",
+        "type": "n8n-nodes-base.rssFeedRead",
+        "typeVersion": 1,
+        "position": [
+          650,
+          600
+        ],
+        "continueOnFail": true,
+        "onError": "continueRegularOutput"
+      },
+      {
+        "parameters": {
+          "mode": "append"
+        },
+        "id": "merge",
+        "name": "Merge All",
+        "type": "n8n-nodes-base.merge",
+        "typeVersion": 3,
+        "position": [
+          900,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Simple hash function (crypto module not available in sandbox)\nfunction simpleHash(str) { let h = 0; for (let i = 0; i < str.length; i++) { const c = str.charCodeAt(i); h = ((h << 5) - h) + c; h |= 0; } return Math.abs(h).toString(16).padStart(8, '0'); }\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nreturn items.map(item => {\n  const d = item.json;\n  const title = (d.title || '').trim();\n  const link = d.link || d.guid || '';\n  const desc = (d.content || d.contentSnippet || d.description || '').replace(/<[^>]*>/g, '').substring(0, 5000);\n  const pubDate = d.isoDate || d.pubDate || null;\n  \n  // Try to extract company from dc:creator or first line of description\n  const company = d['dc:creator'] || d.creator || 'Unknown';\n  \n  // Try to extract location\n  let location = d['dc:location'] || 'UK';\n  \n  // Source detection\n  let source = 'rss';\n  if (link.includes('jobs.ac.uk')) source = 'jobs_ac_uk';\n  else if (link.includes('theguardian')) source = 'guardian';\n  else if (link.includes('cv-library')) source = 'cv_library';\n  else if (link.includes('civilservicejobs')) source = 'civil_service';\n  else if (link.includes('nhs.uk')) source = 'nhs_jobs';\n  \n  const sourceId = link.split('/').filter(Boolean).pop() || simpleHash(link);\n  \n  const dedupStr = `${title.toLowerCase()}|${company.toLowerCase()}|${location.toLowerCase()}`;\n  const dedupHash = simpleHash(dedupStr);\n  \n  const academicKw = ['lecturer', 'professor', 'teaching fellow', 'senior lecturer', 'reader'];\n  const jobType = academicKw.some(k => title.toLowerCase().includes(k)) ? 'academic' : 'corporate';\n  \n  return {\n    json: {\n      title, company, location, description: desc, url: link,\n      posted_at: pubDate, source, source_id: sourceId,\n      salary_raw: d['dc:salary'] || null,\n      salary_min: null, salary_max: null,\n      contract_type: null, work_type: null,\n      job_type: jobType, dedup_hash: dedupHash\n    }\n  };\n}).filter(item => item.json.title && item.json.url);"
+        },
+        "id": "normalize",
+        "name": "Normalize RSS",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1120,
+          200
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO jobs (title, company, location, salary_raw, description, url, posted_at, source_health, job_type, dedup_hash, status) SELECT $1,$2,$3,$4,$5,$6,$7::timestamptz,$8,$9,$10,'raw' WHERE NOT EXISTS (SELECT 1 FROM jobs WHERE dedup_hash = $10 AND is_duplicate = false)",
+          "options": {}
+        },
+        "id": "upsert",
+        "name": "Upsert Jobs",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1340,
+          200
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO source_health (tenant_id, source, status, jobs_found) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', 'rss_poller', 'ok', 0)",
+          "options": {}
+        },
+        "id": "health",
+        "name": "Log Health",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1560,
+          200
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+          "options": {}
+        },
+        "id": "fetch_tenants",
+        "name": "Fetch Active Tenants",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          250,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "batchSize": 1,
+          "options": {}
+        },
+        "id": "loop_tenants",
+        "name": "Loop Over Tenants",
+        "type": "n8n-nodes-base.splitInBatches",
+        "typeVersion": 3,
+        "position": [
+          500,
+          0
+        ]
+      }
+    ],
+    "connections": {
+      "Every 2 Hours": {
+        "main": [
+          [
+            {
+              "node": "Fetch Active Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "jobs.ac.uk L&D": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "jobs.ac.uk HRM": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "jobs.ac.uk OB": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Guardian L&D": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Guardian HR": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "CV-Library L&D": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Civil Service L&D": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "NHS L&D": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "NHS OD": {
+        "main": [
+          [
+            {
+              "node": "Merge All",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Merge All": {
+        "main": [
+          [
+            {
+              "node": "Normalize RSS",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Normalize RSS": {
+        "main": [
+          [
+            {
+              "node": "Upsert Jobs",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Upsert Jobs": {
+        "main": [
+          [
+            {
+              "node": "Log Health",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Fetch Active Tenants": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Loop Over Tenants": {
+        "main": [
+          [],
+          [
+            {
+              "node": "jobs.ac.uk L&D",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Log Health": {
+        "main": [
+          [
+            {
+              "node": "Loop Over Tenants",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-04-04T21:23:52.282Z",
+        "id": 149,
+        "workflowId": "1UpSvlEjPCdsZQsg",
+        "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:23:52.301Z",
+        "id": 150,
+        "workflowId": "1UpSvlEjPCdsZQsg",
+        "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:21.917Z",
+        "id": 197,
+        "workflowId": "1UpSvlEjPCdsZQsg",
+        "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T21:25:21.940Z",
+        "id": 198,
+        "workflowId": "1UpSvlEjPCdsZQsg",
+        "versionId": "4a2c67b1-e8b4-4f2c-a338-4197db0066d2",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}

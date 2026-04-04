@@ -1,0 +1,669 @@
+{
+  "updatedAt": "2026-04-04T14:22:28.642Z",
+  "createdAt": "2026-03-29T11:30:44.466Z",
+  "id": "Lyn8XzHQpSz1hjYa",
+  "name": "WF5: AI Scoring Pipeline",
+  "description": null,
+  "active": true,
+  "isArchived": false,
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "minutes",
+              "minutesInterval": 30
+            }
+          ]
+        }
+      },
+      "id": "sched",
+      "name": "Every 30 Min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id, title, company, location, salary_raw, salary_min, salary_max, description, url, job_type, contract_type, work_type FROM jobs WHERE tenant_id = '{{ $('Loop Over Tenants').item.json.tenant_id }}' AND status = 'raw' AND is_duplicate = false ORDER BY discovered_at ASC LIMIT 25",
+        "options": {}
+      },
+      "id": "get-unscored",
+      "name": "Get Unscored",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        620,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Rule-based pre-filter\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nreturn items.map(item => {\n  const job = item.json;\n  const title = (job.title || '').toLowerCase();\n  \n  // Instant D-tier: clearly wrong\n  const reject = ['machine learning', 'warehouse', 'forklift', 'driver', 'cleaning', 'care assistant', 'support worker', 'nursery', 'receptionist', 'learning support assistant', 'sales executive', 'marketing manager', 'software engineer', 'data scientist', 'plumber', 'electrician'];\n  if (reject.some(k => title.includes(k))) {\n    return { json: { ...job, rule_tier: 'D', rule_score: 10, needs_llm: false } };\n  }\n  \n  // Instant high-score: perfect title match\n  const perfect = ['learning development manager', 'l&d manager', 'head of l&d', 'head of learning', 'l&d business partner', 'talent development manager', 'lecturer in human resource', 'senior lecturer management', 'lecturer hrm', 'organisational development manager', 'people development manager'];\n  if (perfect.some(k => title.includes(k))) {\n    return { json: { ...job, rule_tier: 'A', rule_score: 85, needs_llm: true } };\n  }\n  \n  return { json: { ...job, rule_tier: null, rule_score: null, needs_llm: true } };\n});"
+      },
+      "id": "prefilter",
+      "name": "Rule Pre-Filter",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        840,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict"
+          },
+          "combinator": "and",
+          "conditions": [
+            {
+              "id": "1",
+              "leftValue": "={{ $json.needs_llm }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ]
+        }
+      },
+      "id": "if-llm",
+      "name": "Needs LLM?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1060,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.anthropic.com/v1/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "x-api-key",
+              "value": "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"
+            },
+            {
+              "name": "anthropic-version",
+              "value": "2023-06-01"
+            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"model\":\"claude-3-5-haiku-latest\",\"max_tokens\":500,\"messages\":[{\"role\":\"user\",\"content\":\"Score this job for relevance to a UK job seeker with PhD+MBA in HR, 18 years L&D experience, seeking corporate L&D Manager/Head roles (\u00a370-80k) or university Lecturer positions near Maidenhead, Berkshire (1hr train commute including Reading, London, Slough, Oxford).\\n\\nJob Title: {{ $json.title }}\\nCompany: {{ $json.company }}\\nLocation: {{ $json.location }}\\nSalary: {{ $json.salary_raw || 'Not specified' }}\\nType: {{ $json.job_type }}\\nDescription: {{ ($json.description || '').substring(0, 1500) }}\\n\\nRespond ONLY with JSON (no other text):\\n{\\\"title_match\\\": 0-10, \\\"seniority_match\\\": 0-10, \\\"location_match\\\": 0-10, \\\"salary_match\\\": 0-10, \\\"skills_match\\\": 0-10, \\\"sector_match\\\": 0-10, \\\"reasoning\\\": \\\"one sentence\\\"}\"}]}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "claude",
+      "name": "Claude Haiku Score",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1280,
+        -50
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "// Parse Claude response and calculate composite score\nconst items = $input.all();\nconst tenantId = items[0]?.json?.tenant_id || '';\nreturn items.map(item => {\n  try {\n    const response = item.json;\n    const content = response.content?.[0]?.text || '{}';\n    // Extract JSON from response (handle markdown code blocks)\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    const scores = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');\n    \n    const composite = (\n      (scores.title_match || 0) * 0.25 +\n      (scores.seniority_match || 0) * 0.20 +\n      (scores.location_match || 0) * 0.15 +\n      (scores.salary_match || 0) * 0.15 +\n      (scores.skills_match || 0) * 0.15 +\n      (scores.sector_match || 0) * 0.10\n    ) * 10;\n    \n    let tier;\n    if (composite >= 80) tier = 'A';\n    else if (composite >= 65) tier = 'B';\n    else if (composite >= 45) tier = 'C';\n    else tier = 'D';\n    \n    const tokens = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);\n    const cost = tokens * 0.000001; // Haiku pricing approx\n    \n    return { json: { ...scores, composite_score: Math.round(composite * 100) / 100, tier, tokens_used: tokens, cost_usd: cost, scoring_method: 'haiku', model_used: 'claude-3-5-haiku' } };\n  } catch (e) {\n    return { json: { composite_score: 50, tier: 'C', reasoning: 'Parse error: ' + e.message, scoring_method: 'haiku_error', model_used: 'claude-3-5-haiku', tokens_used: 0, cost_usd: 0 } };\n  }\n});"
+      },
+      "id": "calc",
+      "name": "Calculate Score",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1500,
+        -50
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO job_scores (tenant_id, job_id, scoring_method, title_match, seniority_match, location_match, salary_match, skills_match, sector_match, composite_score, tier, reasoning, model_used, tokens_used, cost_usd, prompt_version) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $('Rule Pre-Filter').item.json.id }}', '{{ $json.scoring_method }}', {{ $json.title_match || 0 }}, {{ $json.seniority_match || 0 }}, {{ $json.location_match || 0 }}, {{ $json.salary_match || 0 }}, {{ $json.skills_match || 0 }}, {{ $json.sector_match || 0 }}, {{ $json.composite_score }}, '{{ $json.tier }}', '{{ ($json.reasoning || '').replace(/'/g, \"''\") }}', '{{ $json.model_used || 'rule_based' }}', {{ $json.tokens_used || 0 }}, {{ $json.cost_usd || 0 }}, 'v1');\nUPDATE jobs SET status = 'scored', tier = '{{ $json.tier }}', composite_score = {{ $json.composite_score }} WHERE id = '{{ $('Rule Pre-Filter').item.json.id }}';",
+        "options": {}
+      },
+      "id": "save-score",
+      "name": "Save Score",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1720,
+        -50
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO job_scores (tenant_id, job_id, scoring_method, composite_score, tier, reasoning, model_used) VALUES ('{{ $('Loop Over Tenants').item.json.tenant_id }}', '{{ $json.id }}', 'rule_based', {{ $json.rule_score }}, '{{ $json.rule_tier }}', 'Rejected by rule-based filter', 'rule_based');\nUPDATE jobs SET status = 'scored', tier = '{{ $json.rule_tier }}', composite_score = {{ $json.rule_score }} WHERE id = '{{ $json.id }}';",
+        "options": {}
+      },
+      "id": "save-d",
+      "name": "Save D-Tier",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        1280,
+        150
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id AS tenant_id, name AS tenant_name, notification_email, candidate_profile, search_config, email_config FROM tenants WHERE is_active = true",
+        "options": {}
+      },
+      "id": "fetch_tenants",
+      "name": "Fetch Active Tenants",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.5,
+      "position": [
+        250,
+        0
+      ],
+      "credentials": {
+        "postgres": {
+          "id": "uAbCv6KI1KdUiMtX",
+          "name": "Selvi Jobs DB"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "id": "loop_tenants",
+      "name": "Loop Over Tenants",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        500,
+        0
+      ]
+    }
+  ],
+  "connections": {
+    "Every 30 Min": {
+      "main": [
+        [
+          {
+            "node": "Fetch Active Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get Unscored": {
+      "main": [
+        [
+          {
+            "node": "Rule Pre-Filter",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Rule Pre-Filter": {
+      "main": [
+        [
+          {
+            "node": "Needs LLM?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Needs LLM?": {
+      "main": [
+        [
+          {
+            "node": "Claude Haiku Score",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Save D-Tier",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Claude Haiku Score": {
+      "main": [
+        [
+          {
+            "node": "Calculate Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Calculate Score": {
+      "main": [
+        [
+          {
+            "node": "Save Score",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Fetch Active Tenants": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Tenants": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Get Unscored",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Score": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save D-Tier": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Tenants",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "callerPolicy": "workflowsFromSameOwner",
+    "availableInMCP": true
+  },
+  "staticData": {
+    "node:Every 30 Min": {
+      "recurrenceRules": []
+    }
+  },
+  "meta": null,
+  "pinData": null,
+  "versionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+  "activeVersionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+  "versionCounter": 19,
+  "triggerCount": 1,
+  "shared": [
+    {
+      "updatedAt": "2026-03-29T11:30:44.466Z",
+      "createdAt": "2026-03-29T11:30:44.466Z",
+      "role": "workflow:owner",
+      "workflowId": "Lyn8XzHQpSz1hjYa",
+      "projectId": "IrY2W58JPTTW41XY",
+      "project": {
+        "updatedAt": "2026-03-29T09:57:50.698Z",
+        "createdAt": "2026-03-29T09:50:40.962Z",
+        "id": "IrY2W58JPTTW41XY",
+        "name": "Venkatesan Ramachandran <venkat.fts@gmail.com>",
+        "type": "personal",
+        "icon": null,
+        "description": null,
+        "creatorId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    }
+  ],
+  "tags": [],
+  "activeVersion": {
+    "updatedAt": "2026-03-29T11:30:44.473Z",
+    "createdAt": "2026-03-29T11:30:44.473Z",
+    "versionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+    "workflowId": "Lyn8XzHQpSz1hjYa",
+    "nodes": [
+      {
+        "parameters": {
+          "rule": {
+            "interval": [
+              {
+                "field": "minutes",
+                "minutesInterval": 30
+              }
+            ]
+          }
+        },
+        "id": "sched",
+        "name": "Every 30 Min",
+        "type": "n8n-nodes-base.scheduleTrigger",
+        "typeVersion": 1.2,
+        "position": [
+          0,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "SELECT id, title, company, location, salary_raw, salary_min, salary_max, description, url, job_type, contract_type, work_type FROM jobs WHERE status = 'raw' AND is_duplicate = false ORDER BY discovered_at ASC LIMIT 25",
+          "options": {}
+        },
+        "id": "get-unscored",
+        "name": "Get Unscored",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          220,
+          0
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "jsCode": "// Rule-based pre-filter\nconst items = $input.all();\nreturn items.map(item => {\n  const job = item.json;\n  const title = (job.title || '').toLowerCase();\n  \n  // Instant D-tier: clearly wrong\n  const reject = ['machine learning', 'warehouse', 'forklift', 'driver', 'cleaning', 'care assistant', 'support worker', 'nursery', 'receptionist', 'learning support assistant', 'sales executive', 'marketing manager', 'software engineer', 'data scientist', 'plumber', 'electrician'];\n  if (reject.some(k => title.includes(k))) {\n    return { json: { ...job, rule_tier: 'D', rule_score: 10, needs_llm: false } };\n  }\n  \n  // Instant high-score: perfect title match\n  const perfect = ['learning development manager', 'l&d manager', 'head of l&d', 'head of learning', 'l&d business partner', 'talent development manager', 'lecturer in human resource', 'senior lecturer management', 'lecturer hrm', 'organisational development manager', 'people development manager'];\n  if (perfect.some(k => title.includes(k))) {\n    return { json: { ...job, rule_tier: 'A', rule_score: 85, needs_llm: true } };\n  }\n  \n  return { json: { ...job, rule_tier: null, rule_score: null, needs_llm: true } };\n});"
+        },
+        "id": "prefilter",
+        "name": "Rule Pre-Filter",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          440,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "conditions": {
+            "options": {
+              "caseSensitive": true,
+              "leftValue": "",
+              "typeValidation": "strict"
+            },
+            "combinator": "and",
+            "conditions": [
+              {
+                "id": "1",
+                "leftValue": "={{ $json.needs_llm }}",
+                "rightValue": true,
+                "operator": {
+                  "type": "boolean",
+                  "operation": "equals"
+                }
+              }
+            ]
+          }
+        },
+        "id": "if-llm",
+        "name": "Needs LLM?",
+        "type": "n8n-nodes-base.if",
+        "typeVersion": 2.2,
+        "position": [
+          660,
+          0
+        ]
+      },
+      {
+        "parameters": {
+          "method": "POST",
+          "url": "https://api.anthropic.com/v1/messages",
+          "sendHeaders": true,
+          "headerParameters": {
+            "parameters": [
+              {
+                "name": "x-api-key",
+                "value": "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"
+              },
+              {
+                "name": "anthropic-version",
+                "value": "2023-06-01"
+              },
+              {
+                "name": "Content-Type",
+                "value": "application/json"
+              }
+            ]
+          },
+          "sendBody": true,
+          "specifyBody": "json",
+          "jsonBody": "={\"model\":\"claude-3-5-haiku-latest\",\"max_tokens\":500,\"messages\":[{\"role\":\"user\",\"content\":\"Score this job for relevance to a UK job seeker with PhD+MBA in HR, 18 years L&D experience, seeking corporate L&D Manager/Head roles (\u00a370-80k) or university Lecturer positions near Maidenhead, Berkshire (1hr train commute including Reading, London, Slough, Oxford).\\n\\nJob Title: {{ $json.title }}\\nCompany: {{ $json.company }}\\nLocation: {{ $json.location }}\\nSalary: {{ $json.salary_raw || 'Not specified' }}\\nType: {{ $json.job_type }}\\nDescription: {{ ($json.description || '').substring(0, 1500) }}\\n\\nRespond ONLY with JSON (no other text):\\n{\\\"title_match\\\": 0-10, \\\"seniority_match\\\": 0-10, \\\"location_match\\\": 0-10, \\\"salary_match\\\": 0-10, \\\"skills_match\\\": 0-10, \\\"sector_match\\\": 0-10, \\\"reasoning\\\": \\\"one sentence\\\"}\"}]}",
+          "options": {
+            "timeout": 30000
+          }
+        },
+        "id": "claude",
+        "name": "Claude Haiku Score",
+        "type": "n8n-nodes-base.httpRequest",
+        "typeVersion": 4.2,
+        "position": [
+          880,
+          -50
+        ]
+      },
+      {
+        "parameters": {
+          "jsCode": "// Parse Claude response and calculate composite score\nconst items = $input.all();\nreturn items.map(item => {\n  try {\n    const response = item.json;\n    const content = response.content?.[0]?.text || '{}';\n    // Extract JSON from response (handle markdown code blocks)\n    const jsonMatch = content.match(/\\{[\\s\\S]*\\}/);\n    const scores = JSON.parse(jsonMatch ? jsonMatch[0] : '{}');\n    \n    const composite = (\n      (scores.title_match || 0) * 0.25 +\n      (scores.seniority_match || 0) * 0.20 +\n      (scores.location_match || 0) * 0.15 +\n      (scores.salary_match || 0) * 0.15 +\n      (scores.skills_match || 0) * 0.15 +\n      (scores.sector_match || 0) * 0.10\n    ) * 10;\n    \n    let tier;\n    if (composite >= 80) tier = 'A';\n    else if (composite >= 65) tier = 'B';\n    else if (composite >= 45) tier = 'C';\n    else tier = 'D';\n    \n    const tokens = (response.usage?.input_tokens || 0) + (response.usage?.output_tokens || 0);\n    const cost = tokens * 0.000001; // Haiku pricing approx\n    \n    return { json: { ...scores, composite_score: Math.round(composite * 100) / 100, tier, tokens_used: tokens, cost_usd: cost, scoring_method: 'haiku', model_used: 'claude-3-5-haiku' } };\n  } catch (e) {\n    return { json: { composite_score: 50, tier: 'C', reasoning: 'Parse error: ' + e.message, scoring_method: 'haiku_error', model_used: 'claude-3-5-haiku', tokens_used: 0, cost_usd: 0 } };\n  }\n});"
+        },
+        "id": "calc",
+        "name": "Calculate Score",
+        "type": "n8n-nodes-base.code",
+        "typeVersion": 2,
+        "position": [
+          1100,
+          -50
+        ]
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO job_scores (job_id, scoring_method, title_match, seniority_match, location_match, salary_match, skills_match, sector_match, composite_score, tier, reasoning, model_used, tokens_used, cost_usd, prompt_version) VALUES ('{{ $('Rule Pre-Filter').item.json.id }}', '{{ $json.scoring_method }}', {{ $json.title_match || 0 }}, {{ $json.seniority_match || 0 }}, {{ $json.location_match || 0 }}, {{ $json.salary_match || 0 }}, {{ $json.skills_match || 0 }}, {{ $json.sector_match || 0 }}, {{ $json.composite_score }}, '{{ $json.tier }}', '{{ ($json.reasoning || '').replace(/'/g, \"''\") }}', '{{ $json.model_used || 'rule_based' }}', {{ $json.tokens_used || 0 }}, {{ $json.cost_usd || 0 }}, 'v1');\nUPDATE jobs SET status = 'scored', tier = '{{ $json.tier }}', composite_score = {{ $json.composite_score }} WHERE id = '{{ $('Rule Pre-Filter').item.json.id }}';",
+          "options": {}
+        },
+        "id": "save-score",
+        "name": "Save Score",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          1320,
+          -50
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      },
+      {
+        "parameters": {
+          "operation": "executeQuery",
+          "query": "INSERT INTO job_scores (job_id, scoring_method, composite_score, tier, reasoning, model_used) VALUES ('{{ $json.id }}', 'rule_based', {{ $json.rule_score }}, '{{ $json.rule_tier }}', 'Rejected by rule-based filter', 'rule_based');\nUPDATE jobs SET status = 'scored', tier = '{{ $json.rule_tier }}', composite_score = {{ $json.rule_score }} WHERE id = '{{ $json.id }}';",
+          "options": {}
+        },
+        "id": "save-d",
+        "name": "Save D-Tier",
+        "type": "n8n-nodes-base.postgres",
+        "typeVersion": 2.5,
+        "position": [
+          880,
+          150
+        ],
+        "credentials": {
+          "postgres": {
+            "id": "uAbCv6KI1KdUiMtX",
+            "name": "Selvi Jobs DB"
+          }
+        }
+      }
+    ],
+    "connections": {
+      "Every 30 Min": {
+        "main": [
+          [
+            {
+              "node": "Get Unscored",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Get Unscored": {
+        "main": [
+          [
+            {
+              "node": "Rule Pre-Filter",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Rule Pre-Filter": {
+        "main": [
+          [
+            {
+              "node": "Needs LLM?",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Needs LLM?": {
+        "main": [
+          [
+            {
+              "node": "Claude Haiku Score",
+              "type": "main",
+              "index": 0
+            }
+          ],
+          [
+            {
+              "node": "Save D-Tier",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Claude Haiku Score": {
+        "main": [
+          [
+            {
+              "node": "Calculate Score",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      },
+      "Calculate Score": {
+        "main": [
+          [
+            {
+              "node": "Save Score",
+              "type": "main",
+              "index": 0
+            }
+          ]
+        ]
+      }
+    },
+    "authors": "Venkatesan Ramachandran",
+    "name": null,
+    "description": null,
+    "autosaved": false,
+    "workflowPublishHistory": [
+      {
+        "createdAt": "2026-03-29T11:32:35.839Z",
+        "id": 4,
+        "workflowId": "Lyn8XzHQpSz1hjYa",
+        "versionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:28.680Z",
+        "id": 100,
+        "workflowId": "Lyn8XzHQpSz1hjYa",
+        "versionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+        "event": "deactivated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      },
+      {
+        "createdAt": "2026-04-04T14:22:28.704Z",
+        "id": 101,
+        "workflowId": "Lyn8XzHQpSz1hjYa",
+        "versionId": "97782499-4057-4e3a-889e-20c7a532d1f4",
+        "event": "activated",
+        "userId": "509e77ae-43b3-42df-bd9d-6e2a7aa26079"
+      }
+    ]
+  }
+}
