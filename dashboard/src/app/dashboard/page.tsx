@@ -36,8 +36,8 @@ async function getDashboardData() {
       db.select({ count: sql<number>`count(*)` }).from(jobs).then((r) => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(jobs).where(not(isNull(jobs.compositeScore))).then((r) => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(jobs).where(eq(jobs.readyToApply, true)).then((r) => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(applications).where(eq(applications.isActive, true)).then((r) => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(applications).where(and(eq(applications.currentState, "interviewing"), eq(applications.isActive, true))).then((r) => Number(r[0]?.count ?? 0)),
+      db.select({ count: sql<number>`count(*)` }).from(applications).where(sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`).then((r) => Number(r[0]?.count ?? 0)),
+      db.select({ count: sql<number>`count(*)` }).from(applications).where(and(eq(applications.currentState, "interviewing"), sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`)).then((r) => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(applications).where(eq(applications.currentState, "offered")).then((r) => Number(r[0]?.count ?? 0)),
     ]);
 
@@ -48,14 +48,15 @@ async function getDashboardData() {
 
     const recentJobs = await db.select().from(jobs).where(or(eq(jobs.tier, "A+"), eq(jobs.tier, "A"), eq(jobs.tier, "B"))).orderBy(desc(jobs.discoveredAt)).limit(5);
     const upcomingInterviews = await db.select().from(interviews).where(and(gte(interviews.interviewDate, now), eq(interviews.status, "scheduled"))).orderBy(interviews.interviewDate).limit(5);
-    const ghostedApps = await db.select().from(applications).where(and(eq(applications.currentState, "ghosted"), eq(applications.isActive, true))).limit(5);
+    const ghostedApps = await db.select().from(applications).where(and(eq(applications.currentState, "ghosted"), sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`)).limit(5);
 
     return {
       funnel: { discovered: discoveredCount, scored: scoredCount, cvReady: cvReadyCount, applied: appliedCount, interviewing: interviewingCount, offered: offeredCount },
       stats: { totalActiveJobs: discoveredCount, applicationsThisWeek: appsThisWeek, responseRate: totalApps > 0 ? Math.round((respondedApps / totalApps) * 100) : 0, upcomingInterviews: upcomingInterviewCount },
       recentJobs, upcomingInterviews, ghostedApps, isLive: true,
     };
-  } catch {
+  } catch (error) {
+    console.error("Dashboard DB error:", error);
     return {
       funnel: mockFunnelData,
       stats: mockStats,
