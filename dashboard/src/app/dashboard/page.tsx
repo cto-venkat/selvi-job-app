@@ -1,3 +1,6 @@
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 import { db } from "@/lib/db";
 import { jobs, applications, interviews } from "@/lib/schema";
 import { desc, eq, gte, and, or, sql, isNull, not } from "drizzle-orm";
