@@ -1,5 +1,8 @@
 import type { Job, Application, Interview, Email, ContentCalendarEntry } from "./schema";
 
+// Extended Application type with isActive (generated column in PG, not in Drizzle schema)
+export type MockApplication = Application & { isActive?: boolean };
+
 export const mockJobs: Job[] = [
   {
     id: "a1b2c3d4-0001-4000-8000-000000000001",
@@ -136,7 +139,7 @@ export const mockJobs: Job[] = [
   },
 ];
 
-export const mockApplications: Application[] = [
+export const mockApplications: MockApplication[] = [
   {
     id: "b1b2c3d4-0001-4000-8000-000000000001",
     tenantId: "t-0001",
@@ -297,7 +300,7 @@ export const mockInterviews: Interview[] = [
     roleTitle: "L&D Business Partner",
     interviewTrack: "standard",
     interviewFormat: "competency",
-    interviewDate: new Date("2026-04-07T10:00:00Z"),
+    interviewDate: "2026-04-07",
     interviewStartTime: "10:00",
     status: "scheduled",
     locationType: "video",
@@ -311,7 +314,7 @@ export const mockInterviews: Interview[] = [
     roleTitle: "People Development Lead",
     interviewTrack: "executive",
     interviewFormat: "case_study",
-    interviewDate: new Date("2026-04-09T14:00:00Z"),
+    interviewDate: "2026-04-09",
     interviewStartTime: "14:00",
     status: "scheduled",
     locationType: "in_person",
@@ -325,7 +328,7 @@ export const mockInterviews: Interview[] = [
     roleTitle: "People Programs Lead",
     interviewTrack: "standard",
     interviewFormat: "behavioral",
-    interviewDate: new Date("2026-04-11T11:00:00Z"),
+    interviewDate: "2026-04-11",
     interviewStartTime: "11:00",
     status: "scheduled",
     locationType: "video",
@@ -339,7 +342,7 @@ export const mockInterviews: Interview[] = [
     roleTitle: "Talent Development Manager",
     interviewTrack: "standard",
     interviewFormat: "panel",
-    interviewDate: new Date("2026-04-14T09:30:00Z"),
+    interviewDate: "2026-04-14",
     interviewStartTime: "09:30",
     status: "scheduled",
     locationType: "in_person",
@@ -730,7 +733,7 @@ export const mockPastInterviews: typeof mockInterviews = [
     roleTitle: "Senior L&D Consultant",
     interviewTrack: "standard",
     interviewFormat: "competency",
-    interviewDate: new Date("2026-03-20T10:00:00Z"),
+    interviewDate: "2026-03-20",
     interviewStartTime: "10:00",
     status: "completed",
     locationType: "video",
@@ -744,7 +747,7 @@ export const mockPastInterviews: typeof mockInterviews = [
     roleTitle: "Learning Programme Manager",
     interviewTrack: "standard",
     interviewFormat: "behavioral",
-    interviewDate: new Date("2026-03-18T14:00:00Z"),
+    interviewDate: "2026-03-18",
     interviewStartTime: "14:00",
     status: "completed",
     locationType: "phone",

@@ -1,9 +1,9 @@
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Calendar, AlertTriangle } from "lucide-react";
-import type { Interview, Application } from "@/lib/schema";
+// Using flexible types to support both DB and mock data shapes
 
-function formatDateTime(d: Date | null) {
+function formatDateTime(d: Date | string | null) {
   if (!d) return "-";
   return new Date(d).toLocaleDateString("en-GB", {
     weekday: "short",
@@ -14,7 +14,7 @@ function formatDateTime(d: Date | null) {
   });
 }
 
-function daysUntil(d: Date | null) {
+function daysUntil(d: Date | string | null) {
   if (!d) return null;
   const diff = Math.ceil(
     (new Date(d).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -22,12 +22,27 @@ function daysUntil(d: Date | null) {
   return diff;
 }
 
+type AlertInterview = {
+  id: string;
+  companyName: string | null;
+  roleTitle: string | null;
+  interviewFormat: string | null;
+  interviewDate: Date | string | null;
+};
+
+type AlertApplication = {
+  id: string;
+  companyName: string | null;
+  jobTitle: string | null;
+  followUpCount: number | null;
+};
+
 export function AlertsSection({
   interviews,
   ghostedApps,
 }: {
-  interviews: Interview[];
-  ghostedApps: Application[];
+  interviews: AlertInterview[];
+  ghostedApps: AlertApplication[];
 }) {
   return (
     <Card>

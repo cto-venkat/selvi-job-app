@@ -27,7 +27,7 @@ const locationIcons: Record<string, typeof Video> = {
   phone: Phone,
 };
 
-function formatDate(d: Date | null): string {
+function formatDate(d: Date | string | null): string {
   if (!d) return "-";
   return new Date(d).toLocaleDateString("en-GB", {
     weekday: "long",

@@ -68,7 +68,7 @@ export default function LinkedInPage() {
   const [rejectReason, setRejectReason] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
   const [recommendations, setRecommendations] = useState(
-    mockLinkedInProfile.recommendations
+    mockLinkedInProfile.recommendations.map((r) => ({ ...r, status: r.status as "pending" | "implemented" | "dismissed" }))
   );
   const [alignmentIssues, setAlignmentIssues] = useState(
     mockLinkedInProfile.alignmentIssues
@@ -76,7 +76,14 @@ export default function LinkedInPage() {
   const [hashtags, setHashtags] = useState(
     mockLinkedInProfile.suggestedHashtags
   );
+  const [toast, setToast] = useState<string | null>(null);
+  const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
   const profile = mockLinkedInProfile;
+
+  function showToast(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  }
 
   function handleEditStart(id: string, text: string) {
     setEditingId(id);
@@ -96,7 +103,7 @@ export default function LinkedInPage() {
     navigator.clipboard.writeText(text);
     setCopiedId(id);
     setTimeout(() => setCopiedId(null), 2000);
-    console.log("Copied to clipboard:", id);
+    showToast("Copied to clipboard.");
   }
 
   function handlePublish(id: string) {
@@ -107,7 +114,7 @@ export default function LinkedInPage() {
           : p
       )
     );
-    console.log("Marked as published:", id);
+    showToast("Post marked as published.");
   }
 
   function handleReject(id: string) {
@@ -124,38 +131,53 @@ export default function LinkedInPage() {
   }
 
   function handleRegenerate(id: string) {
+    setRegeneratingId(id);
     setContent((prev) =>
       prev.map((p) =>
         p.id === id
           ? {
               ...p,
               status: "drafted" as PostStatus,
-              draftText: "[Regenerating...] New AI draft will appear here after generation.",
+              draftText: "Regenerating draft...",
               rejectReason: null,
             }
           : p
       )
     );
-    console.log("Regeneration requested for:", id);
+    // Simulate AI regeneration delay
+    setTimeout(() => {
+      setContent((prev) =>
+        prev.map((p) =>
+          p.id === id
+            ? {
+                ...p,
+                draftText: `[Regenerated] Fresh perspective on "${p.topicTitle}": Building on the latest research and my experience working with enterprise L&D teams, here's what I've observed...`,
+              }
+            : p
+        )
+      );
+      setRegeneratingId(null);
+      showToast("Draft regenerated.");
+    }, 2000);
   }
 
   function handleImplementRec(id: string) {
     setRecommendations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: "implemented" as typeof r.status } : r))
     );
-    console.log("Implemented recommendation:", id);
+    showToast("Recommendation marked as implemented.");
   }
 
   function handleDismissRec(id: string) {
     setRecommendations((prev) =>
       prev.map((r) => (r.id === id ? { ...r, status: "dismissed" as typeof r.status } : r))
     );
-    console.log("Dismissed recommendation:", id);
+    showToast("Recommendation dismissed.");
   }
 
   function handleResolveIssue(id: string) {
     setAlignmentIssues((prev) => prev.filter((i) => i.id !== id));
-    console.log("Resolved alignment issue:", id);
+    showToast("Alignment issue resolved.");
   }
 
   function handleSnoozeIssue(id: string) {
@@ -164,7 +186,7 @@ export default function LinkedInPage() {
     setAlignmentIssues((prev) =>
       prev.map((i) => (i.id === id ? { ...i, snoozedUntil: snoozeDate } : i))
     );
-    console.log("Snoozed alignment issue for 7 days:", id);
+    showToast("Issue snoozed for 7 days.");
   }
 
   function toggleHashtag(tag: string) {
@@ -440,9 +462,10 @@ export default function LinkedInPage() {
                       variant="ghost"
                       size="xs"
                       onClick={() => handleRegenerate(post.id)}
+                      disabled={regeneratingId === post.id}
                     >
-                      <RefreshCw className="h-3 w-3" />
-                      Regenerate
+                      <RefreshCw className={`h-3 w-3 ${regeneratingId === post.id ? "animate-spin" : ""}`} />
+                      {regeneratingId === post.id ? "Regenerating..." : "Regenerate"}
                     </Button>
                   </div>
                 )}
@@ -479,7 +502,9 @@ export default function LinkedInPage() {
                     <Badge variant="outline" className="text-[10px]">
                       {rec.area}
                     </Badge>
-                    <span className="text-sm font-medium">{rec.suggestion}</span>
+                    <span className={`text-sm font-medium ${rec.status === "implemented" ? "line-through text-muted-foreground" : rec.status === "dismissed" ? "text-muted-foreground" : ""}`}>
+                      {rec.suggestion}
+                    </span>
                   </div>
                 </div>
                 {rec.status !== "pending" && (
@@ -608,6 +633,12 @@ export default function LinkedInPage() {
             ))}
           </CardContent>
         </Card>
+      )}
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-foreground text-background px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-bottom-2">
+          {toast}
+        </div>
       )}
     </div>
   );

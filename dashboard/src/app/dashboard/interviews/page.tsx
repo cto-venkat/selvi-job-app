@@ -12,6 +12,14 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
   Dialog,
   DialogContent,
   DialogHeader,
@@ -33,6 +41,12 @@ import {
   StickyNote,
   CalendarDays,
   ChevronRight,
+  LayoutGrid,
+  TableIcon,
+  Search,
+  ArrowUpDown,
+  ChevronUp as ChevronUpIcon,
+  ChevronDown as ChevronDownIcon,
 } from "lucide-react";
 import Link from "next/link";
 
@@ -53,7 +67,7 @@ const locationIcon: Record<string, typeof Video> = {
   phone: Phone,
 };
 
-function getCountdown(date: Date | null): string {
+function getCountdown(date: Date | string | null): string {
   if (!date) return "";
   const now = new Date();
   const target = new Date(date);
@@ -65,7 +79,7 @@ function getCountdown(date: Date | null): string {
   return `In ${diffDays} days`;
 }
 
-function getCountdownColor(date: Date | null): string {
+function getCountdownColor(date: Date | string | null): string {
   if (!date) return "";
   const diffDays = Math.ceil(
     (new Date(date).getTime() - Date.now()) / (1000 * 60 * 60 * 24)
@@ -75,7 +89,7 @@ function getCountdownColor(date: Date | null): string {
   return "text-blue-600 dark:text-blue-400";
 }
 
-function formatDate(d: Date | null): string {
+function formatDate(d: Date | string | null): string {
   if (!d) return "-";
   return new Date(d).toLocaleDateString("en-GB", {
     weekday: "long",
@@ -85,7 +99,7 @@ function formatDate(d: Date | null): string {
   });
 }
 
-function formatShortDate(d: Date | null): string {
+function formatShortDate(d: Date | string | null): string {
   if (!d) return "-";
   return new Date(d).toLocaleDateString("en-GB", {
     weekday: "short",
@@ -116,8 +130,17 @@ const outcomeConfig: Record<
   },
 };
 
+type DisplayMode = "cards" | "table";
+type FilterFormat = "all" | "video" | "in_person" | "phone";
+type FilterTrack = "all" | "standard" | "executive";
+
 export default function InterviewsPage() {
   const [viewMode, setViewMode] = useState<ViewMode>("upcoming");
+  const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [filterFormat, setFilterFormat] = useState<FilterFormat>("all");
+  const [filterTrack, setFilterTrack] = useState<FilterTrack>("all");
+  const [sortDateDir, setSortDateDir] = useState<"asc" | "desc">("asc");
   const [notes, setNotes] = useState<Record<string, string>>({});
   const [editingNoteId, setEditingNoteId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -157,12 +180,33 @@ export default function InterviewsPage() {
         ? allPast
         : [...allUpcoming, ...allPast];
 
+    // Search filter
+    if (searchQuery.trim()) {
+      const q = searchQuery.toLowerCase();
+      items = items.filter(
+        (iv) =>
+          iv.companyName?.toLowerCase().includes(q) ||
+          iv.roleTitle?.toLowerCase().includes(q)
+      );
+    }
+
+    // Format filter
+    if (filterFormat !== "all") {
+      items = items.filter((iv) => iv.locationType === filterFormat);
+    }
+
+    // Track filter
+    if (filterTrack !== "all") {
+      items = items.filter((iv) => iv.interviewTrack === filterTrack);
+    }
+
     return [...items].sort((a, b) => {
       const da = a.interviewDate ? new Date(a.interviewDate).getTime() : 0;
       const db_ = b.interviewDate ? new Date(b.interviewDate).getTime() : 0;
-      return viewMode === "past" ? db_ - da : da - db_;
+      const dir = sortDateDir === "asc" ? 1 : -1;
+      return (da - db_) * dir;
     });
-  }, [viewMode, allUpcoming, allPast, cancelledIds, addedInterviews]);
+  }, [viewMode, allUpcoming, allPast, cancelledIds, addedInterviews, searchQuery, filterFormat, filterTrack, sortDateDir]);
 
   // Mini calendar for this week
   const thisWeekDays = useMemo(() => {
@@ -197,7 +241,7 @@ export default function InterviewsPage() {
       roleTitle: newInterview.role,
       interviewTrack: "standard",
       interviewFormat: newInterview.format,
-      interviewDate: new Date(`${newInterview.date}T${newInterview.time || "09:00"}:00Z`),
+      interviewDate: newInterview.date,
       interviewStartTime: newInterview.time || "09:00",
       status: "scheduled",
       locationType: newInterview.locationType,
@@ -454,25 +498,152 @@ export default function InterviewsPage() {
         </CardContent>
       </Card>
 
-      {/* View Toggle */}
-      <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-fit">
-        {(["upcoming", "past", "all"] as ViewMode[]).map((mode) => (
+      {/* Controls Row */}
+      <div className="flex flex-wrap items-center gap-3">
+        {/* View Toggle: upcoming/past/all */}
+        <div className="flex items-center gap-1 bg-muted rounded-lg p-1 w-fit">
+          {(["upcoming", "past", "all"] as ViewMode[]).map((mode) => (
+            <button
+              key={mode}
+              onClick={() => setViewMode(mode)}
+              className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
+                viewMode === mode
+                  ? "bg-background text-foreground shadow-sm"
+                  : "text-muted-foreground hover:text-foreground"
+              }`}
+            >
+              {mode}
+            </button>
+          ))}
+        </div>
+
+        {/* Display Mode Toggle: cards/table */}
+        <div className="flex items-center bg-muted rounded-lg p-0.5">
           <button
-            key={mode}
-            onClick={() => setViewMode(mode)}
-            className={`px-3 py-1.5 text-xs font-medium rounded-md transition-colors capitalize ${
-              viewMode === mode
-                ? "bg-background text-foreground shadow-sm"
-                : "text-muted-foreground hover:text-foreground"
-            }`}
+            onClick={() => setDisplayMode("cards")}
+            className={`p-1.5 rounded-md transition-colors ${displayMode === "cards" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            title="Card view"
           >
-            {mode}
+            <LayoutGrid className="h-4 w-4" />
           </button>
-        ))}
+          <button
+            onClick={() => setDisplayMode("table")}
+            className={`p-1.5 rounded-md transition-colors ${displayMode === "table" ? "bg-background shadow-sm" : "text-muted-foreground hover:text-foreground"}`}
+            title="Table view"
+          >
+            <TableIcon className="h-4 w-4" />
+          </button>
+        </div>
+
+        {/* Search */}
+        <div className="relative flex-1 min-w-[180px] max-w-xs">
+          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-muted-foreground" />
+          <Input
+            placeholder="Search company or role..."
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            className="pl-8 h-8 text-sm"
+          />
+        </div>
+
+        {/* Format filter */}
+        <select
+          value={filterFormat}
+          onChange={(e) => setFilterFormat(e.target.value as FilterFormat)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+        >
+          <option value="all">All Formats</option>
+          <option value="video">Video</option>
+          <option value="in_person">In Person</option>
+          <option value="phone">Phone</option>
+        </select>
+
+        {/* Track filter */}
+        <select
+          value={filterTrack}
+          onChange={(e) => setFilterTrack(e.target.value as FilterTrack)}
+          className="h-8 rounded-md border border-input bg-background px-2 text-sm"
+        >
+          <option value="all">All Tracks</option>
+          <option value="standard">Standard</option>
+          <option value="executive">Executive</option>
+        </select>
       </div>
 
+      {/* Interview Table View */}
+      {displayMode === "table" && (
+        <Card>
+          <CardContent className="p-0">
+            <Table>
+              <TableHeader>
+                <TableRow>
+                  <TableHead>Company</TableHead>
+                  <TableHead>Role</TableHead>
+                  <TableHead>
+                    <button onClick={() => setSortDateDir(sortDateDir === "asc" ? "desc" : "asc")} className="flex items-center gap-1 hover:text-foreground">
+                      Date {sortDateDir === "asc" ? <ChevronUpIcon className="h-3 w-3" /> : <ChevronDownIcon className="h-3 w-3" />}
+                    </button>
+                  </TableHead>
+                  <TableHead>Time</TableHead>
+                  <TableHead>Format</TableHead>
+                  <TableHead>Status</TableHead>
+                  <TableHead>Prep</TableHead>
+                  <TableHead>Location</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {displayInterviews.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={8} className="text-center py-8 text-muted-foreground">
+                      No interviews match your filters
+                    </TableCell>
+                  </TableRow>
+                ) : (
+                  displayInterviews.map((iv) => {
+                    const past = isPast(iv);
+                    const debrief = debriefs[iv.id];
+                    return (
+                      <TableRow key={iv.id} className="cursor-pointer" onClick={() => window.location.href = `/dashboard/interviews/${iv.id}`}>
+                        <TableCell className="font-medium">{iv.companyName}</TableCell>
+                        <TableCell className="text-muted-foreground max-w-[180px] truncate">{iv.roleTitle}</TableCell>
+                        <TableCell className="text-xs">
+                          {iv.interviewDate ? new Date(iv.interviewDate).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" }) : "-"}
+                        </TableCell>
+                        <TableCell className="text-xs">{iv.interviewStartTime}</TableCell>
+                        <TableCell>
+                          <Badge variant="secondary" className="text-[10px]">
+                            {formatBadge[iv.interviewFormat ?? ""] ?? iv.interviewFormat}
+                          </Badge>
+                        </TableCell>
+                        <TableCell>
+                          {debrief ? (
+                            <Badge variant="outline" className={`text-[10px] ${outcomeConfig[debrief.outcome].class}`}>
+                              {outcomeConfig[debrief.outcome].label}
+                            </Badge>
+                          ) : past ? (
+                            <Badge variant="outline" className="text-[10px] text-zinc-500">Completed</Badge>
+                          ) : (
+                            <Badge variant="outline" className="text-[10px] text-blue-600 dark:text-blue-400">Scheduled</Badge>
+                          )}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground">
+                          {debrief?.notes ? "Debriefed" : notes[iv.id] ? "Notes" : "-"}
+                        </TableCell>
+                        <TableCell className="text-xs text-muted-foreground capitalize">
+                          {iv.locationType?.replace("_", " ") ?? "-"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })
+                )}
+              </TableBody>
+            </Table>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Interview Cards */}
-      {displayInterviews.length === 0 ? (
+      {displayMode === "cards" && displayInterviews.length === 0 ? (
         <Card>
           <CardContent className="py-12 text-center">
             <Calendar className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
@@ -486,7 +657,7 @@ export default function InterviewsPage() {
             </p>
           </CardContent>
         </Card>
-      ) : (
+      ) : displayMode === "cards" ? (
         <div className="grid gap-4 md:grid-cols-2">
           {displayInterviews.map((iv) => {
             const past = isPast(iv);
@@ -850,7 +1021,7 @@ export default function InterviewsPage() {
             );
           })}
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

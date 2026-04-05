@@ -10,6 +10,7 @@ import {
   mockAiActivity,
   mockEmails,
 } from "@/lib/mock-data";
+// Raw SQL queries avoid Drizzle ORM issues with generated columns
 import { PipelineFunnel } from "@/components/pipeline-funnel";
 import { StatsCards } from "@/components/stats-cards";
 import { RecentJobs } from "@/components/recent-jobs";
@@ -25,6 +26,7 @@ async function getDashboardData() {
 
     const now = new Date();
 
+    // Use raw SQL for application queries to avoid GENERATED ALWAYS column issues
     const [
       discoveredCount,
       scoredCount,
@@ -36,19 +38,60 @@ async function getDashboardData() {
       db.select({ count: sql<number>`count(*)` }).from(jobs).then((r) => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(jobs).where(not(isNull(jobs.compositeScore))).then((r) => Number(r[0]?.count ?? 0)),
       db.select({ count: sql<number>`count(*)` }).from(jobs).where(eq(jobs.readyToApply, true)).then((r) => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(applications).where(sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`).then((r) => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(applications).where(and(eq(applications.currentState, "interviewing"), sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`)).then((r) => Number(r[0]?.count ?? 0)),
-      db.select({ count: sql<number>`count(*)` }).from(applications).where(eq(applications.currentState, "offered")).then((r) => Number(r[0]?.count ?? 0)),
+      db.execute(sql`SELECT count(*)::int as count FROM applications WHERE current_state NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`).then((r) => Number(r.rows[0]?.count ?? 0)),
+      db.execute(sql`SELECT count(*)::int as count FROM applications WHERE current_state = 'interviewing'`).then((r) => Number(r.rows[0]?.count ?? 0)),
+      db.execute(sql`SELECT count(*)::int as count FROM applications WHERE current_state = 'offered'`).then((r) => Number(r.rows[0]?.count ?? 0)),
     ]);
 
-    const appsThisWeek = await db.select({ count: sql<number>`count(*)` }).from(applications).where(gte(applications.appliedAt, oneWeekAgo)).then((r) => Number(r[0]?.count ?? 0));
-    const totalApps = await db.select({ count: sql<number>`count(*)` }).from(applications).then((r) => Number(r[0]?.count ?? 0));
-    const respondedApps = await db.select({ count: sql<number>`count(*)` }).from(applications).where(or(eq(applications.currentState, "interviewing"), eq(applications.currentState, "offered"), eq(applications.currentState, "rejected"))).then((r) => Number(r[0]?.count ?? 0));
-    const upcomingInterviewCount = await db.select({ count: sql<number>`count(*)` }).from(interviews).where(and(gte(interviews.interviewDate, now), eq(interviews.status, "scheduled"))).then((r) => Number(r[0]?.count ?? 0));
+    const appsThisWeek = await db.execute(sql`SELECT count(*)::int as count FROM applications WHERE applied_at >= ${oneWeekAgo}`).then((r) => Number(r.rows[0]?.count ?? 0));
+    const totalApps = await db.execute(sql`SELECT count(*)::int as count FROM applications`).then((r) => Number(r.rows[0]?.count ?? 0));
+    const respondedApps = await db.execute(sql`SELECT count(*)::int as count FROM applications WHERE current_state IN ('interviewing', 'offered', 'rejected')`).then((r) => Number(r.rows[0]?.count ?? 0));
+    const upcomingInterviewCount = await db.execute(sql`SELECT count(*)::int as count FROM interviews WHERE interview_date >= ${now.toISOString().split("T")[0]} AND status = 'scheduled'`).then((r) => Number(r.rows[0]?.count ?? 0));
 
     const recentJobs = await db.select().from(jobs).where(or(eq(jobs.tier, "A+"), eq(jobs.tier, "A"), eq(jobs.tier, "B"))).orderBy(desc(jobs.discoveredAt)).limit(5);
-    const upcomingInterviews = await db.select().from(interviews).where(and(gte(interviews.interviewDate, now), eq(interviews.status, "scheduled"))).orderBy(interviews.interviewDate).limit(5);
-    const ghostedApps = await db.select().from(applications).where(and(eq(applications.currentState, "ghosted"), sql`${applications.currentState} NOT IN ('accepted', 'declined', 'rejected', 'withdrawn', 'ghosted', 'expired')`)).limit(5);
+
+    // Raw SQL for interviews to handle date column properly
+    const upcomingInterviewsResult = await db.execute(sql`
+      SELECT id, company_name, role_title, interview_track, interview_format,
+             interview_date, interview_start_time, status, location_type, video_link, physical_address
+      FROM interviews
+      WHERE interview_date >= ${now.toISOString().split("T")[0]} AND status = 'scheduled'
+      ORDER BY interview_date ASC LIMIT 5
+    `);
+    const upcomingInterviews = upcomingInterviewsResult.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      tenantId: null,
+      companyName: r.company_name as string,
+      roleTitle: r.role_title as string,
+      interviewTrack: r.interview_track as string,
+      interviewFormat: r.interview_format as string,
+      interviewDate: r.interview_date as string,
+      interviewStartTime: r.interview_start_time as string,
+      status: r.status as string,
+      locationType: r.location_type as string,
+      videoLink: r.video_link as string | null,
+      physicalAddress: r.physical_address as string | null,
+    }));
+
+    // Raw SQL for ghosted applications to avoid generated column
+    const ghostedResult = await db.execute(sql`
+      SELECT id, company_name, job_title, current_state, applied_at, next_follow_up_at
+      FROM applications WHERE current_state = 'ghosted' LIMIT 5
+    `);
+    const ghostedApps = ghostedResult.rows.map((r: Record<string, unknown>) => ({
+      id: r.id as string,
+      tenantId: null,
+      jobId: null,
+      companyName: r.company_name as string,
+      jobTitle: r.job_title as string,
+      pipelineTrack: null,
+      currentState: r.current_state as string,
+      appliedAt: r.applied_at as Date | null,
+      followUpCount: 0,
+      nextFollowUpAt: r.next_follow_up_at as Date | null,
+      interviewCount: 0,
+      discoverySource: null,
+    }));
 
     return {
       funnel: { discovered: discoveredCount, scored: scoredCount, cvReady: cvReadyCount, applied: appliedCount, interviewing: interviewingCount, offered: offeredCount },
@@ -81,7 +124,7 @@ export default async function DashboardPage() {
   });
 
   const overdueFollowUps = (data.isLive ? [] : mockApplications).filter(
-    (a) => a.nextFollowUpAt && new Date(a.nextFollowUpAt) <= new Date() && a.isActive
+    (a) => a.nextFollowUpAt && new Date(a.nextFollowUpAt) <= new Date() && a.currentState !== "rejected" && a.currentState !== "withdrawn"
   );
 
   const urgentEmails = mockEmails.filter((e) => e.isUrgent && e.status === "unread");

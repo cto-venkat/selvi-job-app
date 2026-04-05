@@ -7,6 +7,7 @@ import {
   integer,
   boolean,
   jsonb,
+  date,
 } from "drizzle-orm/pg-core";
 
 // --- Multi-tenant ---
@@ -55,7 +56,7 @@ export const applications = pgTable("applications", {
   nextFollowUpAt: timestamp("next_follow_up_at", { withTimezone: true }),
   interviewCount: integer("interview_count").default(0),
   discoverySource: text("discovery_source"),
-  isActive: boolean("is_active"),
+  // Note: is_active is a GENERATED ALWAYS column in Postgres - excluded from Drizzle to avoid query failures
 });
 
 export const applicationNotes = pgTable("application_notes", {
@@ -73,7 +74,7 @@ export const interviews = pgTable("interviews", {
   roleTitle: text("role_title"),
   interviewTrack: text("interview_track"),
   interviewFormat: text("interview_format"),
-  interviewDate: timestamp("interview_date", { withTimezone: true }),
+  interviewDate: date("interview_date"),
   interviewStartTime: text("interview_start_time"),
   status: text("status"),
   locationType: text("location_type"),

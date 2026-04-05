@@ -91,11 +91,11 @@ function formatDate(d: Date | null): string {
 
 export default function EmailsPage() {
   const [emailStates, setEmailStates] = useState<
-    Record<string, { reviewed: boolean; archived: boolean; note: string; linkedApp: string | null; replyDraft: string | null }>
+    Record<string, { reviewed: boolean; archived: boolean; declined: boolean; interested: boolean | null; note: string; linkedApp: string | null; replyDraft: string | null }>
   >(() => {
-    const init: Record<string, { reviewed: boolean; archived: boolean; note: string; linkedApp: string | null; replyDraft: string | null }> = {};
+    const init: Record<string, { reviewed: boolean; archived: boolean; declined: boolean; interested: boolean | null; note: string; linkedApp: string | null; replyDraft: string | null }> = {};
     mockEmails.forEach((e) => {
-      init[e.id] = { reviewed: false, archived: false, note: "", linkedApp: null, replyDraft: null };
+      init[e.id] = { reviewed: false, archived: false, declined: false, interested: null, note: "", linkedApp: null, replyDraft: null };
     });
     return init;
   });
@@ -105,6 +105,12 @@ export default function EmailsPage() {
   const [replyDraftId, setReplyDraftId] = useState<string | null>(null);
   const [linkingId, setLinkingId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
+  const [toast, setToast] = useState<string | null>(null);
+
+  function showToast(message: string) {
+    setToast(message);
+    setTimeout(() => setToast(null), 3000);
+  }
 
   const emails = mockEmails;
   const unreadCount = emails.filter((e) => e.status === "unread").length;
@@ -139,7 +145,7 @@ export default function EmailsPage() {
       ...prev,
       [id]: { ...prev[id], archived: true },
     }));
-    console.log("Archived:", id);
+    showToast("Email archived.");
   }
 
   function handleSaveNote(id: string) {
@@ -153,35 +159,36 @@ export default function EmailsPage() {
   }
 
   function handleInterested(id: string) {
-    console.log("Marked as interested:", id);
     setEmailStates((prev) => ({
       ...prev,
-      [id]: { ...prev[id], reviewed: true },
+      [id]: { ...prev[id], reviewed: true, interested: true },
     }));
+    showToast("Marked as interested. Reply draft generated.");
+    handleGenerateReply(id);
   }
 
   function handleNotInterested(id: string) {
-    console.log("Marked as not interested:", id);
     setEmailStates((prev) => ({
       ...prev,
-      [id]: { ...prev[id], reviewed: true },
+      [id]: { ...prev[id], reviewed: true, interested: false },
     }));
+    showToast("Marked as not interested.");
   }
 
   function handleConfirmCalendar(id: string) {
-    console.log("Confirmed and added to calendar:", id);
     setEmailStates((prev) => ({
       ...prev,
       [id]: { ...prev[id], reviewed: true },
     }));
+    showToast("Interview confirmed and added to calendar.");
   }
 
   function handleDecline(id: string) {
-    console.log("Declined interview:", id);
     setEmailStates((prev) => ({
       ...prev,
-      [id]: { ...prev[id], reviewed: true },
+      [id]: { ...prev[id], reviewed: true, declined: true },
     }));
+    showToast("Interview declined.");
   }
 
   function handleLinkApp(emailId: string, appId: string) {
@@ -327,6 +334,21 @@ export default function EmailsPage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    {state?.declined && (
+                      <Badge variant="outline" className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                        Declined
+                      </Badge>
+                    )}
+                    {state?.interested === true && (
+                      <Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                        Interested
+                      </Badge>
+                    )}
+                    {state?.interested === false && (
+                      <Badge variant="outline" className="text-[10px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-400">
+                        Not Interested
+                      </Badge>
+                    )}
                     <Badge
                       variant="outline"
                       className={`text-[10px] ${cat.badgeClass}`}
@@ -479,7 +501,7 @@ export default function EmailsPage() {
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className="text-xs text-muted-foreground">Link to:</span>
                           {mockApplications
-                            .filter((a) => a.isActive)
+                            .filter((a) => a.currentState !== "rejected" && a.currentState !== "withdrawn")
                             .slice(0, 5)
                             .map((app) => (
                               <Button
@@ -611,7 +633,7 @@ export default function EmailsPage() {
                         size="xs"
                         onClick={() => {
                           navigator.clipboard.writeText(state.replyDraft ?? "");
-                          console.log("Reply copied");
+                          showToast("Reply copied to clipboard.");
                         }}
                       >
                         Copy
@@ -639,6 +661,12 @@ export default function EmailsPage() {
           })
         )}
       </div>
+      {/* Toast notification */}
+      {toast && (
+        <div className="fixed bottom-4 right-4 z-50 bg-foreground text-background px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-bottom-2">
+          {toast}
+        </div>
+      )}
     </div>
   );
 }
