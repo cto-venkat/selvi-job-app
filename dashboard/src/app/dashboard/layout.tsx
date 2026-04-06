@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   LayoutDashboard,
   Briefcase,
@@ -12,7 +12,6 @@ import {
   BarChart3,
   Settings,
   Menu,
-  Bell,
   X,
   User,
   LogOut,
@@ -56,10 +55,6 @@ import {
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
-import { mockNotifications } from "@/lib/mock-data";
-
-// No badge counts until we have real data flowing
-const mockBadgeCounts = { jobs: 0, applications: 0, interviews: 0, emails: 0 };
 
 type NavSection = {
   title: string;
@@ -76,16 +71,16 @@ const navSections: NavSection[] = [
     title: "Pipeline",
     items: [
       { href: "/dashboard", label: "Overview", icon: LayoutDashboard },
-      { href: "/dashboard/jobs", label: "Jobs", icon: Briefcase, badge: mockBadgeCounts.jobs },
+      { href: "/dashboard/jobs", label: "Jobs", icon: Briefcase },
       { href: "/dashboard/cv", label: "CV Packages", icon: FileCheck },
-      { href: "/dashboard/applications", label: "Applications", icon: FileText, badge: mockBadgeCounts.applications },
-      { href: "/dashboard/interviews", label: "Interviews", icon: Calendar, badge: mockBadgeCounts.interviews },
+      { href: "/dashboard/applications", label: "Applications", icon: FileText },
+      { href: "/dashboard/interviews", label: "Interviews", icon: Calendar },
     ],
   },
   {
     title: "Intelligence",
     items: [
-      { href: "/dashboard/emails", label: "Emails", icon: Mail, badge: mockBadgeCounts.emails },
+      { href: "/dashboard/emails", label: "Emails", icon: Mail },
       { href: "/dashboard/metrics", label: "Metrics", icon: BarChart3 },
       { href: "/dashboard/linkedin", label: "LinkedIn", icon: LinkedinIcon },
     ],
@@ -97,12 +92,6 @@ const navSections: NavSection[] = [
     ],
   },
 ];
-
-const notificationIcon: Record<string, string> = {
-  interview: "text-amber-500",
-  cv: "text-cyan-500",
-  followup: "text-red-500",
-};
 
 function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   const pathname = usePathname();
@@ -148,12 +137,36 @@ function SidebarNav({ onNavigate }: { onNavigate?: () => void }) {
   );
 }
 
+type SessionUser = { tenantId: string; email: string; name: string };
+
 export default function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [user, setUser] = useState<SessionUser | null>(null);
+
+  useEffect(() => {
+    fetch("/api/auth/session")
+      .then((r) => r.json())
+      .then((d) => setUser(d.user))
+      .catch(() => {});
+  }, []);
+
+  async function handleLogout() {
+    await fetch("/api/auth/logout", { method: "POST" });
+    window.location.href = "/sign-in";
+  }
+
+  const initials = user?.name
+    ? user.name
+        .split(" ")
+        .map((n) => n[0])
+        .join("")
+        .toUpperCase()
+        .slice(0, 2)
+    : "?";
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">
@@ -228,42 +241,6 @@ export default function DashboardLayout({
 
           <ThemeToggle />
 
-          {/* Notification Bell */}
-          <DropdownMenu>
-            <DropdownMenuTrigger
-              className="relative inline-flex h-8 w-8 items-center justify-center rounded-md text-sm font-medium transition-colors hover:bg-accent hover:text-accent-foreground focus-visible:outline-none"
-            >
-              <Bell className="h-4 w-4" />
-              <Badge
-                variant="destructive"
-                className="absolute -top-1 -right-1 h-4 min-w-4 px-1 text-[10px] leading-none"
-              >
-                {mockNotifications.length}
-              </Badge>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-80">
-              <DropdownMenuGroup>
-                <DropdownMenuLabel>Notifications</DropdownMenuLabel>
-              </DropdownMenuGroup>
-              <DropdownMenuSeparator />
-              {mockNotifications.map((notification) => (
-                <DropdownMenuItem key={notification.id} className="flex flex-col items-start gap-1 py-3">
-                  <div className="flex items-center gap-2 w-full">
-                    <span className={cn("text-sm font-medium", notificationIcon[notification.type])}>
-                      {notification.title}
-                    </span>
-                  </div>
-                  <span className="text-xs text-muted-foreground">
-                    {notification.description}
-                  </span>
-                  <span className="text-[10px] text-muted-foreground/70">
-                    {notification.time}
-                  </span>
-                </DropdownMenuItem>
-              ))}
-            </DropdownMenuContent>
-          </DropdownMenu>
-
           <Separator orientation="vertical" className="h-6" />
 
           {/* User Profile */}
@@ -271,31 +248,27 @@ export default function DashboardLayout({
             <DropdownMenuTrigger className="flex items-center gap-2 rounded-md px-2 py-1 transition-colors hover:bg-accent">
               <Avatar className="h-7 w-7">
                 <AvatarFallback className="text-xs bg-cyan-100 text-cyan-700 dark:bg-cyan-900 dark:text-cyan-100">
-                  S
+                  {initials}
                 </AvatarFallback>
               </Avatar>
-              <span className="hidden sm:inline text-sm font-medium">Selvi</span>
+              <span className="hidden sm:inline text-sm font-medium">{user?.name || "..."}</span>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="end" className="w-48">
               <DropdownMenuGroup>
                 <DropdownMenuLabel>
                   <div className="flex flex-col">
-                    <span className="text-sm font-medium">Selvi Chellamma</span>
-                    <span className="text-xs text-muted-foreground font-normal">chellamma.uk@gmail.com</span>
+                    <span className="text-sm font-medium">{user?.name}</span>
+                    <span className="text-xs text-muted-foreground font-normal">{user?.email}</span>
                   </div>
                 </DropdownMenuLabel>
               </DropdownMenuGroup>
               <DropdownMenuSeparator />
               <DropdownMenuItem onClick={() => window.location.href = "/dashboard/settings"}>
                 <User className="mr-2 h-4 w-4" />
-                Profile
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => window.location.href = "/dashboard/settings"}>
-                <Settings className="mr-2 h-4 w-4" />
                 Settings
               </DropdownMenuItem>
               <DropdownMenuSeparator />
-              <DropdownMenuItem variant="destructive" onClick={() => window.location.href = "/sign-in"}>
+              <DropdownMenuItem variant="destructive" onClick={handleLogout}>
                 <LogOut className="mr-2 h-4 w-4" />
                 Sign Out
               </DropdownMenuItem>

@@ -19,14 +19,26 @@ export default function SignInPage() {
     setLoading(true);
     setError("");
 
-    // For now, accept any login and redirect to dashboard
-    // When Clerk is fully configured, this will be replaced by Clerk's SignIn component
-    if (email && password) {
-      router.push("/dashboard");
-    } else {
-      setError("Please enter email and password");
+    try {
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok) {
+        router.push("/dashboard");
+        router.refresh();
+      } else {
+        setError(data.error || "Sign in failed");
+      }
+    } catch {
+      setError("Network error. Please try again.");
+    } finally {
+      setLoading(false);
     }
-    setLoading(false);
   }
 
   return (
@@ -42,7 +54,9 @@ export default function SignInPage() {
         <CardContent>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="email">Email</label>
+              <label className="text-sm font-medium" htmlFor="email">
+                Email
+              </label>
               <Input
                 id="email"
                 type="email"
@@ -53,7 +67,9 @@ export default function SignInPage() {
               />
             </div>
             <div className="space-y-2">
-              <label className="text-sm font-medium" htmlFor="password">Password</label>
+              <label className="text-sm font-medium" htmlFor="password">
+                Password
+              </label>
               <Input
                 id="password"
                 type="password"

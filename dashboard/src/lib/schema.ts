@@ -14,10 +14,11 @@ import {
 
 export const tenants = pgTable("tenants", {
   id: uuid("id").primaryKey().defaultRandom(),
-  clerkUserId: text("clerk_user_id").unique(),
+  clerkUserId: text("clerk_user_id").unique(), // kept for DB compat, unused by app
   name: text("name"),
   email: text("email"),
-  plan: text("plan").default("free"),
+  slug: text("slug"),
+  plan: text("plan").default("free"), // kept for DB compat, unused by app
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 
