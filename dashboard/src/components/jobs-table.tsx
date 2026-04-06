@@ -14,7 +14,6 @@ import { Card, CardContent } from "@/components/ui/card";
 import {
   ChevronDown, ChevronUp, ArrowUpDown, ExternalLink, XCircle, FileCheck, Download, Briefcase,
 } from "lucide-react";
-import { mockScoringRationale } from "@/lib/mock-data";
 import type { Job } from "@/lib/schema";
 
 function tierColor(tier: string | null) {
@@ -192,7 +191,6 @@ export function JobsTable({ jobs: initialJobs }: { jobs: Job[] }) {
               </TableRow>
             ) : (
               filtered.map((job) => {
-                const rationale = mockScoringRationale[job.id];
                 return (
                   <Fragment key={job.id}>
                     <TableRow
@@ -241,26 +239,6 @@ export function JobsTable({ jobs: initialJobs }: { jobs: Job[] }) {
                                 <div>
                                   <p className="text-xs text-muted-foreground mb-1">Description</p>
                                   <p className="text-sm line-clamp-4">{job.description}</p>
-                                </div>
-                              )}
-                              {/* Scoring Rationale */}
-                              {rationale && (
-                                <div>
-                                  <p className="text-xs text-muted-foreground mb-2">AI Scoring Rationale</p>
-                                  <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                                    {rationale.breakdown.map((item, i) => (
-                                      <div key={i} className="rounded border border-border p-2">
-                                        <div className="flex items-center justify-between mb-1">
-                                          <span className="text-xs font-medium">{item.category}</span>
-                                          <span className="text-xs font-mono text-cyan-600 dark:text-cyan-400">{item.score}/{item.maxScore}</span>
-                                        </div>
-                                        <div className="w-full rounded-full bg-muted h-1.5 mb-1">
-                                          <div className="rounded-full bg-cyan-500 h-1.5" style={{ width: `${(item.score / item.maxScore) * 100}%` }} />
-                                        </div>
-                                        <p className="text-[10px] text-muted-foreground">{item.reason}</p>
-                                      </div>
-                                    ))}
-                                  </div>
                                 </div>
                               )}
                               <div className="flex items-center gap-3">
