@@ -29,6 +29,73 @@ type PrepSection = {
   content: string | null;
 };
 
+function formatContent(sectionId: string, data: Record<string, unknown>): string {
+  switch (sectionId) {
+    case "jd-analysis": {
+      const lines: string[] = [];
+      if (Array.isArray(data.mustHaveRequirements)) {
+        lines.push("MUST-HAVE REQUIREMENTS:", ...data.mustHaveRequirements.map((r: string) => `  - ${r}`), "");
+      }
+      if (Array.isArray(data.niceToHaveRequirements)) {
+        lines.push("NICE-TO-HAVE:", ...data.niceToHaveRequirements.map((r: string) => `  - ${r}`), "");
+      }
+      if (Array.isArray(data.requiredSkills)) {
+        lines.push("KEY SKILLS:", ...data.requiredSkills.map((s: string) => `  - ${s}`), "");
+      }
+      if (Array.isArray(data.likelyScreeningQuestions)) {
+        lines.push("LIKELY SCREENING QUESTIONS:", ...data.likelyScreeningQuestions.map((q: string) => `  - ${q}`), "");
+      }
+      if (data.seniorityLevel) lines.push(`SENIORITY: ${data.seniorityLevel}`);
+      if (data.remotePolicy) lines.push(`REMOTE POLICY: ${data.remotePolicy}`);
+      if (Array.isArray(data.keyTerminology)) {
+        lines.push("", "KEY TERMINOLOGY TO USE:", ...data.keyTerminology.map((t: string) => `  - ${t}`));
+      }
+      return lines.join("\n");
+    }
+    case "company-research": {
+      const lines: string[] = [];
+      if (data.overview) lines.push(`OVERVIEW: ${data.overview}`, "");
+      if (data.size) lines.push(`SIZE: ${data.size}`);
+      if (data.sector) lines.push(`SECTOR: ${data.sector}`);
+      if (data.recentNews) lines.push(`\nRECENT NEWS: ${data.recentNews}`);
+      if (Array.isArray(data.talkingPoints)) {
+        lines.push("", "TALKING POINTS FOR APPLICATION:", ...data.talkingPoints.map((p: string) => `  - ${p}`));
+      }
+      if (Array.isArray(data.hiringSignals)) {
+        lines.push("", "HIRING SIGNALS:", ...data.hiringSignals.map((s: string) => `  - ${s}`));
+      }
+      return lines.join("\n");
+    }
+    case "tailored-cv": {
+      const lines: string[] = [];
+      if (data.summary) lines.push("PROFESSIONAL SUMMARY:", data.summary as string, "");
+      if (Array.isArray(data.experience)) {
+        lines.push("EXPERIENCE:");
+        for (const exp of data.experience as Array<{ company: string; title: string; bullets: string[] }>) {
+          lines.push(`\n${exp.title} at ${exp.company}`);
+          if (Array.isArray(exp.bullets)) {
+            lines.push(...exp.bullets.map((b: string) => `  - ${b}`));
+          }
+        }
+        lines.push("");
+      }
+      if (Array.isArray(data.skills)) {
+        lines.push("SKILLS:", (data.skills as string[]).join(", "));
+      }
+      return lines.join("\n");
+    }
+    case "screening-answers": {
+      const lines: string[] = [];
+      for (const [question, answer] of Object.entries(data)) {
+        lines.push(`Q: ${question}`, `A: ${answer as string}`, "");
+      }
+      return lines.join("\n");
+    }
+    default:
+      return JSON.stringify(data, null, 2);
+  }
+}
+
 export function ApplicationPackageClient({
   job,
   atsInfo,
@@ -81,21 +148,54 @@ export function ApplicationPackageClient({
       )
     );
 
-    // TODO: Call API to generate section content via Claude
-    // For now, simulate with a placeholder
-    await new Promise((r) => setTimeout(r, 1500));
+    try {
+      const res = await fetch("/api/prep", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ section: sectionId, jobId: job.id }),
+      });
 
-    setSections((prev) =>
-      prev.map((s) =>
-        s.id === sectionId
-          ? {
-              ...s,
-              status: "ready" as const,
-              content: `[Generated ${s.title} content will appear here once the Claude API is connected. This section will contain AI-generated analysis specific to this job and your profile.]`,
-            }
-          : s
-      )
-    );
+      const data = await res.json();
+
+      if (!res.ok) {
+        setSections((prev) =>
+          prev.map((s) =>
+            s.id === sectionId
+              ? { ...s, status: "pending" as const, content: `Error: ${data.error || "Generation failed"}` }
+              : s
+          )
+        );
+        return;
+      }
+
+      // Format content for display
+      let displayContent: string;
+      if (typeof data.content === "string") {
+        displayContent = data.content;
+      } else if (data.content) {
+        displayContent = formatContent(sectionId, data.content);
+      } else if (data.raw) {
+        displayContent = data.raw;
+      } else {
+        displayContent = "No content generated. Check your profile in Settings.";
+      }
+
+      setSections((prev) =>
+        prev.map((s) =>
+          s.id === sectionId
+            ? { ...s, status: "ready" as const, content: displayContent }
+            : s
+        )
+      );
+    } catch (err) {
+      setSections((prev) =>
+        prev.map((s) =>
+          s.id === sectionId
+            ? { ...s, status: "pending" as const, content: `Network error: ${err instanceof Error ? err.message : "Failed"}` }
+            : s
+        )
+      );
+    }
   }
 
   async function generateAll() {
