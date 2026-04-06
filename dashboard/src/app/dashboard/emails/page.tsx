@@ -1,11 +1,20 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { useData } from "@/lib/use-data";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+  DialogDescription,
+  DialogFooter,
+  DialogClose,
+} from "@/components/ui/dialog";
 import {
   Mail,
   Calendar,
@@ -21,6 +30,8 @@ import {
   ChevronUp,
   FileText,
   Send,
+  Loader2,
+  Copy,
 } from "lucide-react";
 
 type EmailCategory =
@@ -30,7 +41,14 @@ type EmailCategory =
   | "rejection"
   | "job_alert";
 
-type FilterTab = "all" | "needs_action" | "interview_invitation" | "recruiter_outreach" | "job_alert";
+type FilterTab =
+  | "all"
+  | "needs_action"
+  | "interview_invitation"
+  | "recruiter_outreach"
+  | "job_alert";
+
+type EmailAction = "reply" | "confirm-interview" | "decline" | "draft";
 
 const categoryConfig: Record<
   EmailCategory,
@@ -86,26 +104,53 @@ function formatDate(d: Date | null): string {
 }
 
 export default function EmailsPage() {
-  const { data: liveEmails, loading } = useData<any>("emails");
+  const { data: liveEmails, loading } = useData<Record<string, unknown>>("emails");
   const [emailStates, setEmailStates] = useState<
-    Record<string, { reviewed: boolean; archived: boolean; declined: boolean; interested: boolean | null; note: string; linkedApp: string | null; replyDraft: string | null }>
+    Record<
+      string,
+      {
+        reviewed: boolean;
+        archived: boolean;
+        declined: boolean;
+        interested: boolean | null;
+        note: string;
+        linkedApp: string | null;
+      }
+    >
   >({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
-  const [replyDraftId, setReplyDraftId] = useState<string | null>(null);
   const [linkingId, setLinkingId] = useState<string | null>(null);
   const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
   const [toast, setToast] = useState<string | null>(null);
+
+  // Draft dialog state
+  const [draftDialogOpen, setDraftDialogOpen] = useState(false);
+  const [draftEmailId, setDraftEmailId] = useState<string | null>(null);
+  const [draftAction, setDraftAction] = useState<EmailAction | null>(null);
+  const [draftContent, setDraftContent] = useState("");
+  const [draftLoading, setDraftLoading] = useState(false);
+  const [sendLoading, setSendLoading] = useState(false);
+  const [customMessage, setCustomMessage] = useState("");
+  const [showCustomPrompt, setShowCustomPrompt] = useState(false);
 
   // Initialize email states when data loads
   useEffect(() => {
     if (liveEmails.length > 0) {
       setEmailStates((prev) => {
         const next = { ...prev };
-        liveEmails.forEach((e: any) => {
-          if (!next[e.id]) {
-            next[e.id] = { reviewed: false, archived: false, declined: false, interested: null, note: "", linkedApp: null, replyDraft: null };
+        liveEmails.forEach((e: Record<string, unknown>) => {
+          const id = e.id as string;
+          if (!next[id]) {
+            next[id] = {
+              reviewed: false,
+              archived: false,
+              declined: false,
+              interested: null,
+              note: "",
+              linkedApp: null,
+            };
           }
         });
         return next;
@@ -118,15 +163,21 @@ export default function EmailsPage() {
     setTimeout(() => setToast(null), 3000);
   }
 
-  const emails = liveEmails.map((e: any) => ({
+  const emails = liveEmails.map((e: Record<string, unknown>) => ({
     ...e,
-    fromName: e.fromName ?? e.from_name,
-    date: e.date ? new Date(e.date) : null,
-    isUrgent: e.isUrgent ?? e.is_urgent,
+    fromName: (e.fromName ?? e.from_name) as string | null,
+    date: e.date ? new Date(e.date as string) : null,
+    isUrgent: (e.isUrgent ?? e.is_urgent) as boolean | undefined,
+    id: e.id as string,
+    subject: e.subject as string,
+    status: e.status as string,
+    classification: e.classification as string,
   }));
-  const unreadCount = emails.filter((e) => e.status === "unread").length;
+  const unreadCount = emails.filter(
+    (e: { status: string }) => e.status === "unread"
+  ).length;
 
-  const needsAction = (e: typeof emails[0]) => {
+  const needsAction = (e: (typeof emails)[0]) => {
     const cls = e.classification as EmailCategory;
     return (
       cls === "interview_invitation" ||
@@ -135,7 +186,7 @@ export default function EmailsPage() {
     );
   };
 
-  const filteredEmails = emails.filter((e) => {
+  const filteredEmails = emails.filter((e: (typeof emails)[0]) => {
     const state = emailStates[e.id];
     if (state?.archived) return false;
     if (activeFilter === "all") return true;
@@ -148,7 +199,6 @@ export default function EmailsPage() {
       ...prev,
       [id]: { ...prev[id], reviewed: !prev[id].reviewed },
     }));
-    console.log("Toggled reviewed:", id);
   }
 
   function handleArchive(id: string) {
@@ -166,7 +216,108 @@ export default function EmailsPage() {
     }));
     setNoteEditingId(null);
     setNoteText("");
-    console.log("Note saved for:", id);
+  }
+
+  function handleLinkApp(emailId: string, appId: string) {
+    setEmailStates((prev) => ({
+      ...prev,
+      [emailId]: { ...prev[emailId], linkedApp: appId },
+    }));
+    setLinkingId(null);
+  }
+
+  // --- Email action API integration ---
+
+  const generateDraft = useCallback(
+    async (emailId: string, action: EmailAction, message?: string) => {
+      setDraftEmailId(emailId);
+      setDraftAction(action);
+      setDraftContent("");
+      setDraftLoading(true);
+      setDraftDialogOpen(true);
+
+      try {
+        const resp = await fetch("/api/email-actions", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            action,
+            emailId,
+            customMessage: message,
+          }),
+        });
+
+        if (!resp.ok) {
+          const err = await resp.json();
+          throw new Error(err.error || "Failed to generate draft");
+        }
+
+        const data = await resp.json();
+        setDraftContent(data.draft);
+      } catch (error) {
+        const msg =
+          error instanceof Error ? error.message : "Failed to generate draft";
+        showToast(msg);
+        setDraftDialogOpen(false);
+      } finally {
+        setDraftLoading(false);
+      }
+    },
+    []
+  );
+
+  async function handleSendReply() {
+    if (!draftEmailId || !draftContent) return;
+
+    setSendLoading(true);
+    try {
+      const resp = await fetch("/api/email-actions", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          emailId: draftEmailId,
+          replyContent: draftContent,
+        }),
+      });
+
+      if (!resp.ok) {
+        const err = await resp.json();
+        throw new Error(err.error || "Failed to send reply");
+      }
+
+      // Mark as reviewed
+      setEmailStates((prev) => ({
+        ...prev,
+        [draftEmailId]: {
+          ...prev[draftEmailId],
+          reviewed: true,
+          ...(draftAction === "decline" ? { declined: true } : {}),
+          ...(draftAction === "confirm-interview"
+            ? { interested: true }
+            : {}),
+        },
+      }));
+
+      setDraftDialogOpen(false);
+      setDraftContent("");
+      setDraftEmailId(null);
+      setDraftAction(null);
+      showToast("Reply sent successfully.");
+    } catch (error) {
+      const msg =
+        error instanceof Error ? error.message : "Failed to send reply";
+      showToast(msg);
+    } finally {
+      setSendLoading(false);
+    }
+  }
+
+  function handleConfirmCalendar(id: string) {
+    generateDraft(id, "confirm-interview");
+  }
+
+  function handleDecline(id: string) {
+    generateDraft(id, "decline");
   }
 
   function handleInterested(id: string) {
@@ -174,8 +325,7 @@ export default function EmailsPage() {
       ...prev,
       [id]: { ...prev[id], reviewed: true, interested: true },
     }));
-    showToast("Marked as interested. Reply draft generated.");
-    handleGenerateReply(id);
+    generateDraft(id, "reply", "I'm interested in this role and would like to discuss further.");
   }
 
   function handleNotInterested(id: string) {
@@ -186,43 +336,37 @@ export default function EmailsPage() {
     showToast("Marked as not interested.");
   }
 
-  function handleConfirmCalendar(id: string) {
-    setEmailStates((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], reviewed: true },
-    }));
-    showToast("Interview confirmed and added to calendar.");
+  function handleReplyDraft(id: string) {
+    setShowCustomPrompt(true);
+    setDraftEmailId(id);
+    setCustomMessage("");
   }
 
-  function handleDecline(id: string) {
-    setEmailStates((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], reviewed: true, declined: true },
-    }));
-    showToast("Interview declined.");
+  function submitCustomReply() {
+    if (!draftEmailId) return;
+    setShowCustomPrompt(false);
+    generateDraft(
+      draftEmailId,
+      "reply",
+      customMessage || undefined
+    );
+    setCustomMessage("");
   }
 
-  function handleLinkApp(emailId: string, appId: string) {
-    setEmailStates((prev) => ({
-      ...prev,
-      [emailId]: { ...prev[emailId], linkedApp: appId },
-    }));
-    setLinkingId(null);
-    console.log("Linked email", emailId, "to application", appId);
-  }
+  const needsActionCount = emails.filter(
+    (e: (typeof emails)[0]) => needsAction(e) && !emailStates[e.id]?.archived
+  ).length;
 
-  function handleGenerateReply(id: string) {
-    const emailRecord = emails.find((e: any) => e.id === id);
-    const draft = `Hi ${emailRecord?.fromName?.split(" - ")[0] ?? ""},\n\nThank you for your email. I'd be happy to discuss further.\n\nBest regards,\nSelvi`;
-    setEmailStates((prev) => ({
-      ...prev,
-      [id]: { ...prev[id], replyDraft: draft },
-    }));
-    setReplyDraftId(id);
-    console.log("Generated reply draft for:", id);
-  }
+  const draftEmail = draftEmailId
+    ? emails.find((e: (typeof emails)[0]) => e.id === draftEmailId)
+    : null;
 
-  const needsActionCount = emails.filter((e: any) => needsAction(e) && !emailStates[e.id]?.archived).length;
+  const actionLabel: Record<EmailAction, string> = {
+    "confirm-interview": "Confirm Interview",
+    decline: "Decline",
+    reply: "Reply",
+    draft: "Draft",
+  };
 
   if (loading) {
     return (
@@ -279,14 +423,29 @@ export default function EmailsPage() {
           <Card>
             <CardContent className="py-12 text-center">
               <Mail className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
-              <p className="text-muted-foreground font-medium">No emails match this filter</p>
+              <p className="text-muted-foreground font-medium">
+                No emails match this filter
+              </p>
             </CardContent>
           </Card>
         ) : (
-          filteredEmails.map((email) => {
-            const cat = categoryConfig[(email.classification as EmailCategory) ?? "acknowledgement"];
+          filteredEmails.map((email: (typeof emails)[0]) => {
+            const cat =
+              categoryConfig[
+                (email.classification as EmailCategory) ?? "acknowledgement"
+              ];
             const state = emailStates[email.id];
-            const details: any = null;
+            // details will be populated when email parsing adds structured data
+            const details = null as {
+              interviewDate?: string;
+              interviewTime?: string;
+              interviewLocation?: string;
+              interviewFormat?: string;
+              roleTitle?: string;
+              company?: string;
+              recruiterNote?: string;
+              jobLinks?: { url: string; title: string }[];
+            } | null;
             const isExpanded = expandedId === email.id;
 
             return (
@@ -344,7 +503,9 @@ export default function EmailsPage() {
                       </span>
                       {state?.linkedApp && (
                         <>
-                          <span className="text-xs text-muted-foreground/50">&middot;</span>
+                          <span className="text-xs text-muted-foreground/50">
+                            &middot;
+                          </span>
                           <Badge variant="outline" className="text-[10px]">
                             <Link2 className="h-2.5 w-2.5 mr-0.5" />
                             {"Linked"}
@@ -355,17 +516,26 @@ export default function EmailsPage() {
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
                     {state?.declined && (
-                      <Badge variant="outline" className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300">
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300"
+                      >
                         Declined
                       </Badge>
                     )}
                     {state?.interested === true && (
-                      <Badge variant="outline" className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300">
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300"
+                      >
                         Interested
                       </Badge>
                     )}
                     {state?.interested === false && (
-                      <Badge variant="outline" className="text-[10px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-400">
+                      <Badge
+                        variant="outline"
+                        className="text-[10px] bg-zinc-100 text-zinc-600 dark:bg-zinc-800/40 dark:text-zinc-400"
+                      >
                         Not Interested
                       </Badge>
                     )}
@@ -396,48 +566,57 @@ export default function EmailsPage() {
                 {/* Expanded details */}
                 {isExpanded && details && (
                   <div className="ml-11 space-y-3 border-t pt-2">
-                    {/* Interview details */}
                     {details.interviewDate && (
                       <div className="grid gap-2 sm:grid-cols-2 text-xs">
                         <div className="flex items-center gap-1.5">
                           <Calendar className="h-3 w-3 text-muted-foreground" />
-                          <span className="font-medium">{details.interviewDate}</span>
-                          <span className="text-muted-foreground">at {details.interviewTime}</span>
+                          <span className="font-medium">
+                            {details.interviewDate as string}
+                          </span>
+                          <span className="text-muted-foreground">
+                            at {details.interviewTime as string}
+                          </span>
                         </div>
                         <div className="flex items-center gap-1.5">
                           <MapPin className="h-3 w-3 text-muted-foreground" />
-                          <span>{details.interviewLocation}</span>
+                          <span>{details.interviewLocation as string}</span>
                         </div>
                         {details.interviewFormat && (
                           <div className="flex items-center gap-1.5">
                             <FileText className="h-3 w-3 text-muted-foreground" />
-                            <span>Format: {details.interviewFormat}</span>
+                            <span>
+                              Format: {details.interviewFormat as string}
+                            </span>
                           </div>
                         )}
                         {details.roleTitle && (
                           <div className="text-muted-foreground">
-                            {details.roleTitle} at {details.company}
+                            {details.roleTitle as string} at{" "}
+                            {details.company as string}
                           </div>
                         )}
                       </div>
                     )}
 
-                    {/* Recruiter note */}
                     {details.recruiterNote && (
                       <div className="text-xs bg-muted/50 rounded p-2">
-                        <p className="text-muted-foreground">{details.recruiterNote}</p>
+                        <p className="text-muted-foreground">
+                          {details.recruiterNote as string}
+                        </p>
                         {details.roleTitle && (
                           <p className="mt-1 font-medium">
-                            {details.roleTitle} at {details.company}
+                            {details.roleTitle as string} at{" "}
+                            {details.company as string}
                           </p>
                         )}
                       </div>
                     )}
 
-                    {/* Job links */}
                     {details.jobLinks && (
                       <div className="space-y-1">
-                        {details.jobLinks.map((link: any, i: number) => (
+                        {(
+                          details.jobLinks as { url: string; title: string }[]
+                        ).map((link, i: number) => (
                           <a
                             key={i}
                             href={link.url}
@@ -464,7 +643,7 @@ export default function EmailsPage() {
                         onClick={() => handleConfirmCalendar(email.id)}
                       >
                         <Calendar className="h-3 w-3" />
-                        Confirm & Calendar
+                        Confirm & Reply
                       </Button>
                       <Button
                         variant="destructive"
@@ -506,10 +685,10 @@ export default function EmailsPage() {
                       <Button
                         variant="ghost"
                         size="xs"
-                        onClick={() => handleGenerateReply(email.id)}
+                        onClick={() => handleReplyDraft(email.id)}
                       >
                         <Send className="h-3 w-3" />
-                        Reply Draft
+                        Reply
                       </Button>
                     </>
                   )}
@@ -519,8 +698,12 @@ export default function EmailsPage() {
                     <>
                       {linkingId === email.id ? (
                         <div className="flex items-center gap-1 flex-wrap">
-                          <span className="text-xs text-muted-foreground">Link to:</span>
-                          <span className="text-xs text-muted-foreground">No applications loaded</span>
+                          <span className="text-xs text-muted-foreground">
+                            Link to:
+                          </span>
+                          <span className="text-xs text-muted-foreground">
+                            No applications loaded
+                          </span>
                           <Button
                             variant="ghost"
                             size="xs"
@@ -555,16 +738,23 @@ export default function EmailsPage() {
                   )}
 
                   {/* Job alert actions */}
-                  {email.classification === "job_alert" && !isExpanded && details?.jobLinks && (
-                    <Button
-                      variant="outline"
-                      size="xs"
-                      onClick={() => setExpandedId(email.id)}
-                    >
-                      <ExternalLink className="h-3 w-3" />
-                      View Jobs ({details.jobLinks.length})
-                    </Button>
-                  )}
+                  {email.classification === "job_alert" &&
+                    !isExpanded &&
+                    details?.jobLinks && (
+                      <Button
+                        variant="outline"
+                        size="xs"
+                        onClick={() => setExpandedId(email.id)}
+                      >
+                        <ExternalLink className="h-3 w-3" />
+                        View Jobs (
+                        {
+                          (details.jobLinks as { url: string; title: string }[])
+                            .length
+                        }
+                        )
+                      </Button>
+                    )}
 
                   {/* Common actions for all */}
                   {noteEditingId === email.id ? (
@@ -610,53 +800,6 @@ export default function EmailsPage() {
                   )}
                 </div>
 
-                {/* Reply draft */}
-                {replyDraftId === email.id && state?.replyDraft && (
-                  <div className="ml-11 space-y-2 border-t pt-2">
-                    <p className="text-xs font-medium text-muted-foreground">Reply draft:</p>
-                    <Textarea
-                      value={state.replyDraft}
-                      onChange={(e) =>
-                        setEmailStates((prev) => ({
-                          ...prev,
-                          [email.id]: { ...prev[email.id], replyDraft: e.target.value },
-                        }))
-                      }
-                      rows={5}
-                      className="text-xs"
-                    />
-                    <div className="flex gap-2">
-                      <Button
-                        size="xs"
-                        onClick={() => {
-                          console.log("Reply sent for:", email.id);
-                          setReplyDraftId(null);
-                        }}
-                      >
-                        <Send className="h-3 w-3" />
-                        Send Reply
-                      </Button>
-                      <Button
-                        variant="outline"
-                        size="xs"
-                        onClick={() => {
-                          navigator.clipboard.writeText(state.replyDraft ?? "");
-                          showToast("Reply copied to clipboard.");
-                        }}
-                      >
-                        Copy
-                      </Button>
-                      <Button
-                        variant="ghost"
-                        size="xs"
-                        onClick={() => setReplyDraftId(null)}
-                      >
-                        Discard
-                      </Button>
-                    </div>
-                  </div>
-                )}
-
                 {/* Saved note display */}
                 {state?.note && noteEditingId !== email.id && (
                   <div className="ml-11 text-xs text-muted-foreground bg-muted/50 rounded px-2 py-1">
@@ -669,6 +812,124 @@ export default function EmailsPage() {
           })
         )}
       </div>
+
+      {/* Custom reply prompt dialog */}
+      <Dialog
+        open={showCustomPrompt}
+        onOpenChange={(open) => {
+          if (!open) {
+            setShowCustomPrompt(false);
+            setCustomMessage("");
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-md">
+          <DialogHeader>
+            <DialogTitle>Write Reply</DialogTitle>
+            <DialogDescription>
+              Describe what you want to say, and AI will draft a professional
+              reply.
+            </DialogDescription>
+          </DialogHeader>
+          <Textarea
+            value={customMessage}
+            onChange={(e) => setCustomMessage(e.target.value)}
+            placeholder="e.g. Thank them and ask about the role requirements..."
+            rows={3}
+            className="text-sm"
+          />
+          <DialogFooter>
+            <DialogClose
+              render={<Button variant="outline" size="sm" />}
+            >
+              Cancel
+            </DialogClose>
+            <Button size="sm" onClick={submitCustomReply}>
+              <Send className="h-3 w-3" />
+              Generate Draft
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
+      {/* Draft review dialog */}
+      <Dialog
+        open={draftDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDraftDialogOpen(false);
+            setDraftContent("");
+            setDraftEmailId(null);
+            setDraftAction(null);
+          }
+        }}
+      >
+        <DialogContent className="sm:max-w-lg">
+          <DialogHeader>
+            <DialogTitle>
+              {draftAction ? actionLabel[draftAction] : "Reply"} Draft
+            </DialogTitle>
+            {draftEmail && (
+              <DialogDescription>
+                Replying to: {draftEmail.subject}
+              </DialogDescription>
+            )}
+          </DialogHeader>
+
+          {draftLoading ? (
+            <div className="flex items-center justify-center py-8 gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Generating draft...
+            </div>
+          ) : (
+            <div className="space-y-3">
+              <Textarea
+                value={draftContent}
+                onChange={(e) => setDraftContent(e.target.value)}
+                rows={8}
+                className="text-sm"
+              />
+              <p className="text-[11px] text-muted-foreground">
+                Edit the draft above before sending. The reply will be sent via
+                your connected email.
+              </p>
+            </div>
+          )}
+
+          <DialogFooter>
+            <Button
+              variant="outline"
+              size="sm"
+              disabled={!draftContent || draftLoading}
+              onClick={() => {
+                navigator.clipboard.writeText(draftContent);
+                showToast("Copied to clipboard.");
+              }}
+            >
+              <Copy className="h-3 w-3" />
+              Copy
+            </Button>
+            <DialogClose
+              render={<Button variant="outline" size="sm" />}
+            >
+              Discard
+            </DialogClose>
+            <Button
+              size="sm"
+              disabled={!draftContent || sendLoading || draftLoading}
+              onClick={handleSendReply}
+            >
+              {sendLoading ? (
+                <Loader2 className="h-3 w-3 animate-spin" />
+              ) : (
+                <Send className="h-3 w-3" />
+              )}
+              Send Reply
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+
       {/* Toast notification */}
       {toast && (
         <div className="fixed bottom-4 right-4 z-50 bg-foreground text-background px-4 py-2.5 rounded-lg shadow-lg text-sm font-medium animate-in fade-in slide-in-from-bottom-2">
