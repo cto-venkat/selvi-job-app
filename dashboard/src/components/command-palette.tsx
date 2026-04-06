@@ -15,7 +15,6 @@ import {
   Search,
   FileCheck,
 } from "lucide-react";
-import { mockJobs, mockApplications } from "@/lib/mock-data";
 
 function LinkedinIconSmall({ className }: { className?: string }) {
   return (
@@ -115,37 +114,8 @@ export function CommandPalette() {
               </Command.Item>
             </Command.Group>
 
-            {/* Recent Jobs */}
-            <Command.Group heading="Recent Jobs" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground">
-              {mockJobs.slice(0, 5).map((job) => (
-                <Command.Item
-                  key={job.id}
-                  value={`${job.title} ${job.company}`}
-                  onSelect={() => navigate("/dashboard/jobs")}
-                  className="flex items-center gap-2 rounded-md px-2 py-2 text-sm cursor-pointer aria-selected:bg-accent aria-selected:text-accent-foreground"
-                >
-                  <Briefcase className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="truncate">{job.title}</span>
-                  <span className="ml-auto text-xs text-muted-foreground shrink-0">{job.company}</span>
-                </Command.Item>
-              ))}
-            </Command.Group>
-
-            {/* Applications */}
-            <Command.Group heading="Applications" className="[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:py-1.5 [&_[cmdk-group-heading]]:text-xs [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:text-muted-foreground">
-              {mockApplications.slice(0, 5).map((app) => (
-                <Command.Item
-                  key={app.id}
-                  value={`${app.jobTitle} ${app.companyName}`}
-                  onSelect={() => navigate(`/dashboard/applications/${app.id}`)}
-                  className="flex items-center gap-2 rounded-md px-2 py-2 text-sm cursor-pointer aria-selected:bg-accent aria-selected:text-accent-foreground"
-                >
-                  <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                  <span className="truncate">{app.jobTitle}</span>
-                  <span className="ml-auto text-xs text-muted-foreground shrink-0">{app.companyName}</span>
-                </Command.Item>
-              ))}
-            </Command.Group>
+            {/* Recent Jobs - loaded dynamically */}
+            {/* Applications - loaded dynamically */}
           </Command.List>
 
           <div className="border-t border-border px-3 py-2 text-[10px] text-muted-foreground flex items-center gap-4">

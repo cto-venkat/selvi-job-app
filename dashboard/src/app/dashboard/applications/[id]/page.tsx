@@ -1,8 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
-import { mockApplications, mockApplicationTimeline } from "@/lib/mock-data";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -32,16 +31,7 @@ const stateConfig: Record<string, { label: string; class: string }> = {
 
 const allStates = ["applied", "acknowledged", "interviewing", "offered", "rejected", "ghosted"];
 
-const eventIcon: Record<string, typeof Calendar> = {
-  discovery: Briefcase,
-  cv: FileText,
-  application: Send,
-  email: Mail,
-  interview: Calendar,
-  followup: Clock,
-};
-
-function formatDate(d: Date | null): string {
+function formatDate(d: Date | string | null): string {
   if (!d) return "-";
   return new Date(d).toLocaleDateString("en-GB", {
     day: "numeric",
@@ -57,11 +47,49 @@ export default function ApplicationDetailPage() {
   const router = useRouter();
   const id = params.id as string;
 
-  const app = mockApplications.find((a) => a.id === id);
-  const timeline = mockApplicationTimeline[id];
+  const [app, setApp] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
   const [noteText, setNoteText] = useState("");
-  const [notes, setNotes] = useState(timeline?.notes ?? []);
-  const [currentState, setCurrentState] = useState(app?.currentState ?? "applied");
+  const [notes, setNotes] = useState<any[]>([]);
+  const [currentState, setCurrentState] = useState("applied");
+
+  useEffect(() => {
+    fetch(`/api/data?type=applications`)
+      .then((r) => r.json())
+      .then((d) => {
+        const apps = d.data || [];
+        const found = apps.find((a: any) => a.id === id);
+        if (found) {
+          const normalized = {
+            ...found,
+            companyName: found.companyName ?? found.company_name,
+            jobTitle: found.jobTitle ?? found.job_title,
+            currentState: found.currentState ?? found.current_state,
+            pipelineTrack: found.pipelineTrack ?? found.pipeline_track,
+            appliedAt: found.appliedAt ?? found.applied_at ? new Date(found.appliedAt ?? found.applied_at) : null,
+            nextFollowUpAt: found.nextFollowUpAt ?? found.next_follow_up_at ? new Date(found.nextFollowUpAt ?? found.next_follow_up_at) : null,
+            interviewCount: found.interviewCount ?? found.interview_count ?? 0,
+            followUpCount: found.followUpCount ?? found.follow_up_count ?? 0,
+            discoverySource: found.discoverySource ?? found.discovery_source,
+          };
+          setApp(normalized);
+          setCurrentState(normalized.currentState ?? "applied");
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Button variant="ghost" size="sm" onClick={() => router.push("/dashboard/applications")}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> Back to Applications
+        </Button>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
   if (!app) {
     return (
@@ -165,31 +193,9 @@ export default function ApplicationDetailPage() {
               <CardTitle className="text-sm font-medium text-muted-foreground">Timeline</CardTitle>
             </CardHeader>
             <CardContent>
-              {timeline?.events && timeline.events.length > 0 ? (
-                <div className="relative space-y-4 pl-6 before:absolute before:left-2 before:top-2 before:bottom-2 before:w-px before:bg-border">
-                  {timeline.events.map((event, i) => {
-                    const Icon = eventIcon[event.type] ?? Clock;
-                    return (
-                      <div key={i} className="relative flex items-start gap-3">
-                        <div className="absolute -left-6 top-1 flex h-4 w-4 items-center justify-center rounded-full bg-background border border-border">
-                          <Icon className="h-2.5 w-2.5 text-muted-foreground" />
-                        </div>
-                        <div className="min-w-0 flex-1">
-                          <div className="flex items-center gap-2">
-                            <p className="text-sm font-medium">{event.title}</p>
-                            <span className="text-[10px] text-muted-foreground">{formatDate(event.date)}</span>
-                          </div>
-                          <p className="text-xs text-muted-foreground mt-0.5">{event.description}</p>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-4">
-                  No timeline events recorded yet.
-                </p>
-              )}
+              <p className="text-sm text-muted-foreground text-center py-4">
+                No timeline events recorded yet.
+              </p>
             </CardContent>
           </Card>
 
@@ -225,7 +231,7 @@ export default function ApplicationDetailPage() {
           </Card>
         </div>
 
-        {/* Sidebar: Documents */}
+        {/* Sidebar */}
         <div className="space-y-6">
           <Card>
             <CardHeader className="pb-3">
@@ -234,24 +240,11 @@ export default function ApplicationDetailPage() {
                 Documents
               </CardTitle>
             </CardHeader>
-            <CardContent className="space-y-2">
-              {timeline?.documents && timeline.documents.length > 0 ? (
-                timeline.documents.map((doc, i) => (
-                  <div key={i} className="flex items-center gap-2 rounded-md border border-border p-2">
-                    <FileText className="h-4 w-4 text-muted-foreground shrink-0" />
-                    <span className="text-sm truncate flex-1">{doc.name}</span>
-                    <Button variant="ghost" size="icon-xs">
-                      <Eye className="h-3 w-3" />
-                    </Button>
-                  </div>
-                ))
-              ) : (
-                <p className="text-sm text-muted-foreground text-center py-2">No documents.</p>
-              )}
+            <CardContent>
+              <p className="text-sm text-muted-foreground text-center py-2">No documents.</p>
             </CardContent>
           </Card>
 
-          {/* Follow-up History */}
           <Card>
             <CardHeader className="pb-3">
               <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">

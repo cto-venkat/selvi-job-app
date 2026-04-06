@@ -1,8 +1,7 @@
 "use client";
 
 import { useParams, useRouter } from "next/navigation";
-import { useState } from "react";
-import { mockInterviews, mockPrepBriefs } from "@/lib/mock-data";
+import { useState, useEffect } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -42,9 +41,43 @@ export default function InterviewPrepPage() {
   const router = useRouter();
   const id = params.id as string;
   const [completed, setCompleted] = useState(false);
+  const [interview, setInterview] = useState<any>(null);
+  const [loading, setLoading] = useState(true);
 
-  const interview = mockInterviews.find((iv) => iv.id === id);
-  const prep = mockPrepBriefs[id];
+  useEffect(() => {
+    fetch(`/api/data?type=interviews`)
+      .then((r) => r.json())
+      .then((d) => {
+        const interviews = d.data || [];
+        const found = interviews.find((iv: any) => iv.id === id);
+        if (found) {
+          setInterview({
+            ...found,
+            companyName: found.companyName ?? found.company_name,
+            roleTitle: found.roleTitle ?? found.role_title,
+            interviewFormat: found.interviewFormat ?? found.interview_format,
+            interviewDate: found.interviewDate ?? found.interview_date,
+            interviewStartTime: found.interviewStartTime ?? found.interview_start_time,
+            locationType: found.locationType ?? found.location_type,
+            videoLink: found.videoLink ?? found.video_link,
+            physicalAddress: found.physicalAddress ?? found.physical_address,
+          });
+        }
+        setLoading(false);
+      })
+      .catch(() => setLoading(false));
+  }, [id]);
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <Button variant="ghost" size="sm" onClick={() => router.push("/dashboard/interviews")}>
+          <ArrowLeft className="h-4 w-4 mr-1" /> Back to Interviews
+        </Button>
+        <p className="text-sm text-muted-foreground">Loading...</p>
+      </div>
+    );
+  }
 
   if (!interview) {
     return (
@@ -134,116 +167,15 @@ export default function InterviewPrepPage() {
         </Card>
       </div>
 
-      {prep ? (
-        <div className="grid gap-6 lg:grid-cols-3">
-          <div className="lg:col-span-2 space-y-6">
-            {/* Company Research */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <BookOpen className="h-4 w-4" /> Company Research
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed">{prep.companyResearch}</p>
-              </CardContent>
-            </Card>
-
-            {/* Role Insights */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <MessageSquare className="h-4 w-4" /> Role Insights
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed">{prep.roleInsights}</p>
-              </CardContent>
-            </Card>
-
-            {/* Likely Questions */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Likely Questions & STAR Examples
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {prep.likelyQuestions.map((q, i) => (
-                  <div key={i} className="rounded-md border border-border p-4 space-y-2">
-                    <p className="text-sm font-semibold">Q: {q.question}</p>
-                    <div className="rounded bg-muted/50 p-3">
-                      <p className="text-xs font-medium text-muted-foreground mb-1">STAR Example</p>
-                      <p className="text-sm leading-relaxed">{q.starExample}</p>
-                    </div>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
-          </div>
-
-          {/* Sidebar */}
-          <div className="space-y-6">
-            {/* Salary Intel */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <DollarSign className="h-4 w-4" /> Salary Intelligence
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed">{prep.salaryIntelligence}</p>
-              </CardContent>
-            </Card>
-
-            {/* Travel/Logistics */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground flex items-center gap-2">
-                  <Navigation className="h-4 w-4" /> Travel & Logistics
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm leading-relaxed">{prep.travelLogistics}</p>
-                {interview.physicalAddress && (
-                  <div className="mt-3">
-                    <Badge variant="outline" className="text-xs">
-                      <MapPin className="h-3 w-3 mr-1" />
-                      {interview.physicalAddress}
-                    </Badge>
-                  </div>
-                )}
-              </CardContent>
-            </Card>
-
-            {/* Debrief */}
-            <Card>
-              <CardHeader className="pb-3">
-                <CardTitle className="text-sm font-medium text-muted-foreground">
-                  Post-Interview Debrief
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <textarea
-                  placeholder="How did it go? Record your thoughts here..."
-                  className="w-full min-h-[100px] rounded-md border border-input bg-transparent px-3 py-2 text-sm placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
-                />
-                <Button size="sm" className="mt-2 w-full">Save Debrief</Button>
-              </CardContent>
-            </Card>
-          </div>
-        </div>
-      ) : (
-        <Card>
-          <CardContent className="py-12 text-center">
-            <BookOpen className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
-            <p className="text-muted-foreground font-medium">No prep brief available yet</p>
-            <p className="text-sm text-muted-foreground mt-1">
-              A prep brief will be generated automatically as the interview date approaches.
-            </p>
-          </CardContent>
-        </Card>
-      )}
+      <Card>
+        <CardContent className="py-12 text-center">
+          <BookOpen className="h-12 w-12 mx-auto text-muted-foreground/40 mb-3" />
+          <p className="text-muted-foreground font-medium">No prep brief available yet</p>
+          <p className="text-sm text-muted-foreground mt-1">
+            A prep brief will be generated automatically as the interview date approaches.
+          </p>
+        </CardContent>
+      </Card>
     </div>
   );
 }

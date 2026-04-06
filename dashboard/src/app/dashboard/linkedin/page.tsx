@@ -1,10 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import {
-  mockLinkedInContent,
-  mockLinkedInProfile,
-} from "@/lib/mock-data";
+import { useState, useEffect } from "react";
+import { useData } from "@/lib/use-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -59,7 +56,23 @@ export default function LinkedInPage() {
   type AlignItem = { id: string; issue: string; severity: string; snoozedUntil: Date | null };
   type HashItem = { tag: string; category: string; selected: boolean };
 
+  const { data: calendar, loading } = useData<any>("content-calendar");
   const [content, setContent] = useState<ContentItem[]>([]);
+
+  useEffect(() => {
+    if (calendar.length > 0) {
+      setContent(calendar.map((c: any) => ({
+        id: c.id,
+        topicTitle: c.topicTitle ?? c.topic_title ?? "Untitled",
+        contentPillar: c.contentPillar ?? c.content_pillar,
+        draftText: c.draftText ?? c.draft_text,
+        suggestedPostDay: c.suggestedPostDay ?? c.suggested_post_day,
+        status: (c.status ?? "planned") as PostStatus,
+        publishedAt: c.publishedAt ?? c.published_at,
+        rejectReason: c.rejectReason ?? c.reject_reason,
+      })));
+    }
+  }, [calendar]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
@@ -193,6 +206,17 @@ export default function LinkedInPage() {
   const snoozedIssues = alignmentIssues.filter(
     (i) => i.snoozedUntil && new Date(i.snoozedUntil) >= new Date()
   );
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">LinkedIn</h1>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">

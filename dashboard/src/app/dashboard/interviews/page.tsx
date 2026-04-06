@@ -1,11 +1,7 @@
 "use client";
 
-import { useState, useMemo } from "react";
-import {
-  mockInterviews,
-  mockPastInterviews,
-  mockInterviewDebriefs,
-} from "@/lib/mock-data";
+import { useState, useMemo, useEffect } from "react";
+import { useData } from "@/lib/use-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -135,6 +131,7 @@ type FilterFormat = "all" | "video" | "in_person" | "phone";
 type FilterTrack = "all" | "standard" | "executive";
 
 export default function InterviewsPage() {
+  const { data: rawInterviews, loading } = useData<any>("interviews");
   const [viewMode, setViewMode] = useState<ViewMode>("upcoming");
   const [displayMode, setDisplayMode] = useState<DisplayMode>("cards");
   const [searchQuery, setSearchQuery] = useState("");
@@ -146,7 +143,7 @@ export default function InterviewsPage() {
   const [noteText, setNoteText] = useState("");
   const [debriefs, setDebriefs] = useState<
     Record<string, { outcome: InterviewOutcome; notes: string; date: Date }>
-  >(mockInterviewDebriefs);
+  >({});
   const [completingId, setCompletingId] = useState<string | null>(null);
   const [completionOutcome, setCompletionOutcome] = useState<InterviewOutcome>("pending");
   const [completionNotes, setCompletionNotes] = useState("");
@@ -163,14 +160,39 @@ export default function InterviewsPage() {
     locationType: "video",
     link: "",
   });
-  const [addedInterviews, setAddedInterviews] = useState<typeof mockInterviews>([]);
+  const [addedInterviews, setAddedInterviews] = useState<any[]>([]);
   const [debriefEditId, setDebriefEditId] = useState<string | null>(null);
   const [debriefText, setDebriefText] = useState("");
 
-  const allUpcoming = [...addedInterviews].filter(
+  // Normalize snake_case from DB to camelCase
+  const normalizedInterviews = useMemo(() => {
+    return rawInterviews.map((iv: any) => ({
+      ...iv,
+      companyName: iv.companyName ?? iv.company_name,
+      roleTitle: iv.roleTitle ?? iv.role_title,
+      interviewTrack: iv.interviewTrack ?? iv.interview_track,
+      interviewFormat: iv.interviewFormat ?? iv.interview_format,
+      interviewDate: iv.interviewDate ?? iv.interview_date,
+      interviewStartTime: iv.interviewStartTime ?? iv.interview_start_time,
+      locationType: iv.locationType ?? iv.location_type,
+      videoLink: iv.videoLink ?? iv.video_link,
+      physicalAddress: iv.physicalAddress ?? iv.physical_address,
+    }));
+  }, [rawInterviews]);
+
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const allUpcoming = [...normalizedInterviews.filter((iv: any) => {
+    if (!iv.interviewDate) return true;
+    return new Date(iv.interviewDate) >= today;
+  }), ...addedInterviews].filter(
     (iv) => !cancelledIds.has(iv.id)
   );
-  const allPast: typeof mockPastInterviews = [];
+  const allPast: any[] = normalizedInterviews.filter((iv: any) => {
+    if (!iv.interviewDate) return false;
+    return new Date(iv.interviewDate) < today;
+  });
 
   const displayInterviews = useMemo(() => {
     let items =
@@ -304,7 +326,18 @@ export default function InterviewsPage() {
     console.log("Debrief saved for:", id);
   }
 
-  const isPast = (iv: typeof mockInterviews[0]) =>
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Interviews</h1>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  const isPast = (iv: any) =>
     iv.status === "completed" ||
     (iv.interviewDate && new Date(iv.interviewDate) < new Date());
 

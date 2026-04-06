@@ -5,18 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import {
-  mockMetricsWeekly,
-  mockSourceData,
-  mockPipelineFunnel,
-  mockMetricGoals,
-  mockMetricInsights,
-} from "@/lib/mock-data";
-
-// Use empty arrays instead of mock data for production
-const emptySourceData: typeof mockSourceData = [];
-const emptyPipelineFunnel: typeof mockPipelineFunnel = [];
-const emptyInsights: typeof mockMetricInsights = [];
+import { useData } from "@/lib/use-data";
 import {
   LineChart,
   Line,
@@ -59,17 +48,18 @@ type DateRange = "1w" | "1m" | "3m" | "custom";
 type SourceFilter = string | null;
 
 export default function MetricsPage() {
+  const { data: rawMetrics, loading } = useData<any>("metrics");
   const [dateRange, setDateRange] = useState<DateRange>("3m");
   const [showComparison, setShowComparison] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>(null);
-  const [goals, setGoals] = useState<typeof mockMetricGoals>({ applicationsPerWeek: { target: 0, actual: 0 }, responseRate: { target: 0, actual: 0 }, interviewsPerMonth: { target: 0, actual: 0 }, offersPerQuarter: { target: 0, actual: 0 } });
+  const [goals, setGoals] = useState<{ applicationsPerWeek: { target: number; actual: number }; responseRate: { target: number; actual: number }; interviewsPerMonth: { target: number; actual: number }; offersPerQuarter: { target: number; actual: number } }>({ applicationsPerWeek: { target: 0, actual: 0 }, responseRate: { target: 0, actual: 0 }, interviewsPerMonth: { target: 0, actual: 0 }, offersPerQuarter: { target: 0, actual: 0 } });
   const [editingGoal, setEditingGoal] = useState<string | null>(null);
   const [goalInput, setGoalInput] = useState("");
 
   // Filter data by date range
   const data = useMemo(() => {
-    return [] as typeof mockMetricsWeekly;
-  }, [dateRange]);
+    return rawMetrics as any[];
+  }, [rawMetrics, dateRange]);
 
   // Calculate comparison deltas
   const comparison = useMemo(() => {
@@ -153,6 +143,17 @@ export default function MetricsPage() {
       <ArrowDownRight className="h-3.5 w-3.5 text-red-500" />
     );
   };
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Metrics</h1>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -394,7 +395,7 @@ export default function MetricsPage() {
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={emptySourceData}
+                  data={[] as any[]}
                   layout="vertical"
                   onClick={(e) => {
                     if (e?.activeLabel) handleSourceClick(String(e.activeLabel));
@@ -429,7 +430,7 @@ export default function MetricsPage() {
                     radius={[0, 4, 4, 0]}
                     className="cursor-pointer"
                   >
-                    {emptySourceData.map((entry, index) => (
+                    {([] as any[]).map((entry, index) => (
                       <Cell
                         key={`cell-${index}`}
                         fill={sourceColors[index % sourceColors.length]}
@@ -457,7 +458,7 @@ export default function MetricsPage() {
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={emptyPipelineFunnel} layout="vertical">
+                <BarChart data={[] as any[]} layout="vertical">
                   <CartesianGrid
                     strokeDasharray="3 3"
                     className="stroke-border"
@@ -570,7 +571,7 @@ export default function MetricsPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {emptyInsights.map((insight, i) => (
+            {([] as any[]).map((insight, i) => (
               <div
                 key={i}
                 className="flex items-start gap-2 rounded-md border border-border p-3"

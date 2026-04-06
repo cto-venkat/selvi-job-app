@@ -1,9 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
-import { mockApplications } from "@/lib/mock-data";
+import { useData } from "@/lib/use-data";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -62,7 +62,7 @@ function formatDate(d: Date | null): string {
   return new Date(d).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 }
 
-function exportCsv(apps: typeof mockApplications) {
+function exportCsv(apps: any[]) {
   const header = "Company,Job Title,Status,Track,Applied Date,Follow-up Date,Interviews,Source\n";
   const rows = apps.map((a) =>
     [a.companyName, a.jobTitle, a.currentState, a.pipelineTrack, a.appliedAt?.toISOString().split("T")[0] ?? "", a.nextFollowUpAt ? new Date(a.nextFollowUpAt).toISOString().split("T")[0] : "", a.interviewCount, a.discoverySource].join(",")
@@ -78,6 +78,7 @@ function exportCsv(apps: typeof mockApplications) {
 
 export default function ApplicationsPage() {
   const searchParams = useSearchParams();
+  const { data: liveApps, loading } = useData<any>("applications");
   const [showAddForm, setShowAddForm] = useState(searchParams.get("add") === "true");
   const [filterState, setFilterState] = useState<string>("all");
   const [filterTrack, setFilterTrack] = useState<string>("all");
@@ -90,7 +91,24 @@ export default function ApplicationsPage() {
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterSource, setFilterSource] = useState<string>("all");
   const [filterHasInterviews, setFilterHasInterviews] = useState(false);
-  const [apps, setApps] = useState<typeof mockApplications>([]);
+  const [apps, setApps] = useState<any[]>([]);
+
+  useEffect(() => {
+    if (liveApps.length > 0) {
+      setApps(liveApps.map((a: any) => ({
+        ...a,
+        companyName: a.companyName ?? a.company_name,
+        jobTitle: a.jobTitle ?? a.job_title,
+        currentState: a.currentState ?? a.current_state,
+        pipelineTrack: a.pipelineTrack ?? a.pipeline_track,
+        appliedAt: a.appliedAt ?? a.applied_at ? new Date(a.appliedAt ?? a.applied_at) : null,
+        nextFollowUpAt: a.nextFollowUpAt ?? a.next_follow_up_at ? new Date(a.nextFollowUpAt ?? a.next_follow_up_at) : null,
+        interviewCount: a.interviewCount ?? a.interview_count ?? 0,
+        followUpCount: a.followUpCount ?? a.follow_up_count ?? 0,
+        discoverySource: a.discoverySource ?? a.discovery_source,
+      })));
+    }
+  }, [liveApps]);
 
   // Quick add form
   const [newCompany, setNewCompany] = useState("");
@@ -201,6 +219,17 @@ export default function ApplicationsPage() {
   }
 
   const uniqueSources = [...new Set(apps.map((a) => a.discoverySource).filter(Boolean))];
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Applications</h1>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   if (apps.length === 0 && !showAddForm) {
     return (

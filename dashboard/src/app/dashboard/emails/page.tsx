@@ -1,11 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import {
-  mockEmails,
-  mockEmailExtractedDetails,
-  mockApplications,
-} from "@/lib/mock-data";
+import { useState, useEffect } from "react";
+import { useData } from "@/lib/use-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -90,15 +86,10 @@ function formatDate(d: Date | null): string {
 }
 
 export default function EmailsPage() {
+  const { data: liveEmails, loading } = useData<any>("emails");
   const [emailStates, setEmailStates] = useState<
     Record<string, { reviewed: boolean; archived: boolean; declined: boolean; interested: boolean | null; note: string; linkedApp: string | null; replyDraft: string | null }>
-  >(() => {
-    const init: Record<string, { reviewed: boolean; archived: boolean; declined: boolean; interested: boolean | null; note: string; linkedApp: string | null; replyDraft: string | null }> = {};
-    mockEmails.forEach((e) => {
-      init[e.id] = { reviewed: false, archived: false, declined: false, interested: null, note: "", linkedApp: null, replyDraft: null };
-    });
-    return init;
-  });
+  >({});
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [noteEditingId, setNoteEditingId] = useState<string | null>(null);
   const [noteText, setNoteText] = useState("");
@@ -107,12 +98,32 @@ export default function EmailsPage() {
   const [activeFilter, setActiveFilter] = useState<FilterTab>("all");
   const [toast, setToast] = useState<string | null>(null);
 
+  // Initialize email states when data loads
+  useEffect(() => {
+    if (liveEmails.length > 0) {
+      setEmailStates((prev) => {
+        const next = { ...prev };
+        liveEmails.forEach((e: any) => {
+          if (!next[e.id]) {
+            next[e.id] = { reviewed: false, archived: false, declined: false, interested: null, note: "", linkedApp: null, replyDraft: null };
+          }
+        });
+        return next;
+      });
+    }
+  }, [liveEmails]);
+
   function showToast(message: string) {
     setToast(message);
     setTimeout(() => setToast(null), 3000);
   }
 
-  const emails: typeof mockEmails = [];
+  const emails = liveEmails.map((e: any) => ({
+    ...e,
+    fromName: e.fromName ?? e.from_name,
+    date: e.date ? new Date(e.date) : null,
+    isUrgent: e.isUrgent ?? e.is_urgent,
+  }));
   const unreadCount = emails.filter((e) => e.status === "unread").length;
 
   const needsAction = (e: typeof emails[0]) => {
@@ -201,10 +212,8 @@ export default function EmailsPage() {
   }
 
   function handleGenerateReply(id: string) {
-    const details = mockEmailExtractedDetails[id];
-    const draft = details?.recruiterNote
-      ? `Hi ${mockEmails.find((e) => e.id === id)?.fromName?.split(" - ")[0] ?? ""},\n\nThank you for reaching out about the ${details.roleTitle ?? "role"}. I'd be interested to learn more.\n\nCould we arrange a brief call this week to discuss the details?\n\nBest regards,\nSelvi`
-      : `Hi,\n\nThank you for your email. I'd be happy to discuss further.\n\nBest regards,\nSelvi`;
+    const emailRecord = emails.find((e: any) => e.id === id);
+    const draft = `Hi ${emailRecord?.fromName?.split(" - ")[0] ?? ""},\n\nThank you for your email. I'd be happy to discuss further.\n\nBest regards,\nSelvi`;
     setEmailStates((prev) => ({
       ...prev,
       [id]: { ...prev[id], replyDraft: draft },
@@ -213,7 +222,18 @@ export default function EmailsPage() {
     console.log("Generated reply draft for:", id);
   }
 
-  const needsActionCount = emails.filter((e) => needsAction(e) && !emailStates[e.id]?.archived).length;
+  const needsActionCount = emails.filter((e: any) => needsAction(e) && !emailStates[e.id]?.archived).length;
+
+  if (loading) {
+    return (
+      <div className="space-y-6">
+        <div>
+          <h1 className="text-2xl font-bold tracking-tight">Emails</h1>
+          <p className="text-sm text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
@@ -266,7 +286,7 @@ export default function EmailsPage() {
           filteredEmails.map((email) => {
             const cat = categoryConfig[(email.classification as EmailCategory) ?? "acknowledgement"];
             const state = emailStates[email.id];
-            const details = mockEmailExtractedDetails[email.id];
+            const details: any = null;
             const isExpanded = expandedId === email.id;
 
             return (
@@ -327,7 +347,7 @@ export default function EmailsPage() {
                           <span className="text-xs text-muted-foreground/50">&middot;</span>
                           <Badge variant="outline" className="text-[10px]">
                             <Link2 className="h-2.5 w-2.5 mr-0.5" />
-                            {mockApplications.find((a) => a.id === state.linkedApp)?.companyName ?? "Linked"}
+                            {"Linked"}
                           </Badge>
                         </>
                       )}
@@ -417,7 +437,7 @@ export default function EmailsPage() {
                     {/* Job links */}
                     {details.jobLinks && (
                       <div className="space-y-1">
-                        {details.jobLinks.map((link, i) => (
+                        {details.jobLinks.map((link: any, i: number) => (
                           <a
                             key={i}
                             href={link.url}
@@ -500,19 +520,7 @@ export default function EmailsPage() {
                       {linkingId === email.id ? (
                         <div className="flex items-center gap-1 flex-wrap">
                           <span className="text-xs text-muted-foreground">Link to:</span>
-                          {mockApplications
-                            .filter((a) => a.currentState !== "rejected" && a.currentState !== "withdrawn")
-                            .slice(0, 5)
-                            .map((app) => (
-                              <Button
-                                key={app.id}
-                                variant="outline"
-                                size="xs"
-                                onClick={() => handleLinkApp(email.id, app.id)}
-                              >
-                                {app.companyName}
-                              </Button>
-                            ))}
+                          <span className="text-xs text-muted-foreground">No applications loaded</span>
                           <Button
                             variant="ghost"
                             size="xs"

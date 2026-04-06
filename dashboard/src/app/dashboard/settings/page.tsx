@@ -1,7 +1,6 @@
 "use client";
 
 import { useState } from "react";
-import { mockSettings } from "@/lib/mock-data";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -19,10 +18,18 @@ function LinkedinIconSmall({ className }: { className?: string }) {
   );
 }
 
+const defaultSettings = {
+  profile: { name: "", email: "", phone: "", location: "", salaryRange: "", noticePeriod: "" },
+  searchConfig: { searchTerms: [] as string[], sources: [] as string[], salaryMin: 0, salaryMax: 0, locations: [] as string[], tierThresholds: {} as Record<string, string> },
+  notifications: { emailEnabled: false, recipient: "", digestTime: "08:00", quietHoursStart: "22:00", quietHoursEnd: "07:00", urgentBypassQuietHours: true },
+  connectedAccounts: { gmail: { connected: false, email: "" }, linkedin: { connected: false, profile: "" } },
+  workflows: [] as { id: string; name: string; status: string }[],
+};
+
 export default function SettingsPage() {
-  const [profile, setProfile] = useState(mockSettings.profile);
-  const [searchConfig, setSearchConfig] = useState(mockSettings.searchConfig);
-  const [notifications, setNotifications] = useState(mockSettings.notifications);
+  const [profile, setProfile] = useState(defaultSettings.profile);
+  const [searchConfig, setSearchConfig] = useState(defaultSettings.searchConfig);
+  const [notifications, setNotifications] = useState(defaultSettings.notifications);
   const [newTerm, setNewTerm] = useState("");
   const [savingProfile, setSavingProfile] = useState(false);
   const [savingSearch, setSavingSearch] = useState(false);
@@ -328,12 +335,12 @@ export default function SettingsPage() {
                   <div>
                     <p className="text-sm font-medium">Gmail</p>
                     <p className="text-xs text-muted-foreground">
-                      {mockSettings.connectedAccounts.gmail.connected ? mockSettings.connectedAccounts.gmail.email : "Not connected"}
+                      {defaultSettings.connectedAccounts.gmail.connected ? defaultSettings.connectedAccounts.gmail.email : "Not connected"}
                     </p>
                   </div>
                 </div>
-                <Button variant={mockSettings.connectedAccounts.gmail.connected ? "outline" : "default"} size="sm">
-                  {mockSettings.connectedAccounts.gmail.connected ? "Disconnect" : "Connect"}
+                <Button variant={defaultSettings.connectedAccounts.gmail.connected ? "outline" : "default"} size="sm">
+                  {defaultSettings.connectedAccounts.gmail.connected ? "Disconnect" : "Connect"}
                 </Button>
               </div>
               <div className="flex items-center justify-between rounded-md border border-border p-3">
@@ -342,13 +349,13 @@ export default function SettingsPage() {
                   <div>
                     <p className="text-sm font-medium">LinkedIn</p>
                     <p className="text-xs text-muted-foreground">
-                      {mockSettings.connectedAccounts.linkedin.connected ? mockSettings.connectedAccounts.linkedin.profile : "Not connected"}
+                      {defaultSettings.connectedAccounts.linkedin.connected ? defaultSettings.connectedAccounts.linkedin.profile : "Not connected"}
                     </p>
                   </div>
                 </div>
-                <Badge variant={mockSettings.connectedAccounts.linkedin.connected ? "default" : "secondary"}
-                  className={mockSettings.connectedAccounts.linkedin.connected ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : ""}>
-                  {mockSettings.connectedAccounts.linkedin.connected ? "Connected" : "Not connected"}
+                <Badge variant={defaultSettings.connectedAccounts.linkedin.connected ? "default" : "secondary"}
+                  className={defaultSettings.connectedAccounts.linkedin.connected ? "bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300" : ""}>
+                  {defaultSettings.connectedAccounts.linkedin.connected ? "Connected" : "Not connected"}
                 </Badge>
               </div>
             </CardContent>
@@ -363,7 +370,7 @@ export default function SettingsPage() {
             </CardHeader>
             <CardContent>
               <div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
-                {mockSettings.workflows.map((wf) => (
+                {defaultSettings.workflows.map((wf) => (
                   <div key={wf.id} className="flex items-center justify-between py-1.5 px-2 rounded border border-border">
                     <span className="text-sm truncate mr-2">{wf.name}</span>
                     <Badge
