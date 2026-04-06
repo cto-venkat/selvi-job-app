@@ -56,7 +56,10 @@ import {
 import { cn } from "@/lib/utils";
 import { ThemeToggle } from "@/components/theme-toggle";
 import { CommandPalette } from "@/components/command-palette";
-import { mockNotifications, mockBadgeCounts } from "@/lib/mock-data";
+import { mockNotifications } from "@/lib/mock-data";
+
+// No badge counts until we have real data flowing
+const mockBadgeCounts = { jobs: 0, applications: 0, interviews: 0, emails: 0 };
 
 type NavSection = {
   title: string;

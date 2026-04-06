@@ -206,7 +206,7 @@ function downloadCv(filename: string, content: string) {
 }
 
 export default function CvPage() {
-  const packages = mockCvPackages;
+  const packages: typeof mockCvPackages = [];
   const [previewId, setPreviewId] = useState<string | null>(null);
 
   const previewPkg = previewId ? packages.find((p) => p.id === previewId) : null;

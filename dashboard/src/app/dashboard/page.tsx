@@ -126,11 +126,11 @@ export default async function DashboardPage() {
     return d.toDateString() === now.toDateString();
   });
 
-  const overdueFollowUps = (data.isLive ? [] : mockApplications).filter(
+  const overdueFollowUps = ([] as typeof mockApplications).filter(
     (a) => a.nextFollowUpAt && new Date(a.nextFollowUpAt) <= new Date() && a.currentState !== "rejected" && a.currentState !== "withdrawn"
   );
 
-  const urgentEmails = mockEmails.filter((e) => e.isUrgent && e.status === "unread");
+  const urgentEmails = ([] as typeof mockEmails).filter((e) => e.isUrgent && e.status === "unread");
 
   const hasTodayItems = todayInterviews.length > 0 || overdueFollowUps.length > 0 || urgentEmails.length > 0;
 

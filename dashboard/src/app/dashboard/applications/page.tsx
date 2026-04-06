@@ -90,7 +90,7 @@ export default function ApplicationsPage() {
   const [filterDateTo, setFilterDateTo] = useState("");
   const [filterSource, setFilterSource] = useState<string>("all");
   const [filterHasInterviews, setFilterHasInterviews] = useState(false);
-  const [apps, setApps] = useState(mockApplications);
+  const [apps, setApps] = useState<typeof mockApplications>([]);
 
   // Quick add form
   const [newCompany, setNewCompany] = useState("");

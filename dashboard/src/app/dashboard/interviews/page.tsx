@@ -167,10 +167,10 @@ export default function InterviewsPage() {
   const [debriefEditId, setDebriefEditId] = useState<string | null>(null);
   const [debriefText, setDebriefText] = useState("");
 
-  const allUpcoming = [...mockInterviews, ...addedInterviews].filter(
+  const allUpcoming = [...addedInterviews].filter(
     (iv) => !cancelledIds.has(iv.id)
   );
-  const allPast = mockPastInterviews;
+  const allPast: typeof mockPastInterviews = [];
 
   const displayInterviews = useMemo(() => {
     let items =

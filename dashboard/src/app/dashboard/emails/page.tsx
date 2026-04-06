@@ -112,7 +112,7 @@ export default function EmailsPage() {
     setTimeout(() => setToast(null), 3000);
   }
 
-  const emails = mockEmails;
+  const emails: typeof mockEmails = [];
   const unreadCount = emails.filter((e) => e.status === "unread").length;
 
   const needsAction = (e: typeof emails[0]) => {
