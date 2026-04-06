@@ -165,6 +165,17 @@ export async function getEmails(tenantId: string, limit = 100) {
   return result.rows;
 }
 
+export async function getEmailById(tenantId: string, emailId: string) {
+  const result = await db.execute(sql`
+    SELECT e.*, ec.classification, ec.confidence, ec.is_urgent
+    FROM emails e
+    LEFT JOIN email_classifications ec ON ec.email_id = e.id AND ec.tenant_id = e.tenant_id
+    WHERE e.tenant_id = ${tenantId} AND e.id = ${emailId}
+    LIMIT 1
+  `);
+  return result.rows[0] ?? null;
+}
+
 // ─── Metrics ───────────────────────────────────────────
 
 export async function getWeeklyMetrics(tenantId: string) {

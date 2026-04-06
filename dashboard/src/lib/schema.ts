@@ -155,6 +155,18 @@ export const notificationQueue = pgTable("notification_queue", {
   sent: boolean("sent").default(false),
 });
 
+export const starStories = pgTable("star_stories", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  tenantId: uuid("tenant_id"),
+  situation: text("situation"),
+  task: text("task"),
+  action: text("action"),
+  result: text("result"),
+  skillsDemonstrated: text("skills_demonstrated").array(),
+  rolesApplicable: text("roles_applicable").array(),
+  createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
+});
+
 // Types
 export type Tenant = typeof tenants.$inferSelect;
 export type Job = typeof jobs.$inferSelect;
@@ -168,3 +180,4 @@ export type Email = typeof emails.$inferSelect;
 export type EmailClassification = typeof emailClassifications.$inferSelect;
 export type ContentCalendarEntry = typeof contentCalendar.$inferSelect;
 export type NotificationQueueEntry = typeof notificationQueue.$inferSelect;
+export type StarStory = typeof starStories.$inferSelect;
