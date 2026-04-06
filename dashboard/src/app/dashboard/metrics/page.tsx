@@ -12,6 +12,11 @@ import {
   mockMetricGoals,
   mockMetricInsights,
 } from "@/lib/mock-data";
+
+// Use empty arrays instead of mock data for production
+const emptySourceData: typeof mockSourceData = [];
+const emptyPipelineFunnel: typeof mockPipelineFunnel = [];
+const emptyInsights: typeof mockMetricInsights = [];
 import {
   LineChart,
   Line,
@@ -57,15 +62,13 @@ export default function MetricsPage() {
   const [dateRange, setDateRange] = useState<DateRange>("3m");
   const [showComparison, setShowComparison] = useState(false);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>(null);
-  const [goals, setGoals] = useState(mockMetricGoals);
+  const [goals, setGoals] = useState<typeof mockMetricGoals>({ applicationsPerWeek: { target: 0, actual: 0 }, responseRate: { target: 0, actual: 0 }, interviewsPerMonth: { target: 0, actual: 0 }, offersPerQuarter: { target: 0, actual: 0 } });
   const [editingGoal, setEditingGoal] = useState<string | null>(null);
   const [goalInput, setGoalInput] = useState("");
 
   // Filter data by date range
   const data = useMemo(() => {
-    if (dateRange === "1w") return mockMetricsWeekly.slice(-1);
-    if (dateRange === "1m") return mockMetricsWeekly.slice(-4);
-    return mockMetricsWeekly;
+    return [] as typeof mockMetricsWeekly;
   }, [dateRange]);
 
   // Calculate comparison deltas
@@ -391,7 +394,7 @@ export default function MetricsPage() {
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart
-                  data={mockSourceData}
+                  data={emptySourceData}
                   layout="vertical"
                   onClick={(e) => {
                     if (e?.activeLabel) handleSourceClick(String(e.activeLabel));
@@ -426,7 +429,7 @@ export default function MetricsPage() {
                     radius={[0, 4, 4, 0]}
                     className="cursor-pointer"
                   >
-                    {mockSourceData.map((entry, index) => (
+                    {emptySourceData.map((entry, index) => (
                       <Cell
                         key={`cell-${index}`}
                         fill={sourceColors[index % sourceColors.length]}
@@ -454,7 +457,7 @@ export default function MetricsPage() {
           <CardContent>
             <div className="h-64">
               <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={mockPipelineFunnel} layout="vertical">
+                <BarChart data={emptyPipelineFunnel} layout="vertical">
                   <CartesianGrid
                     strokeDasharray="3 3"
                     className="stroke-border"
@@ -567,7 +570,7 @@ export default function MetricsPage() {
         </CardHeader>
         <CardContent>
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-            {mockMetricInsights.map((insight, i) => (
+            {emptyInsights.map((insight, i) => (
               <div
                 key={i}
                 className="flex items-start gap-2 rounded-md border border-border p-3"

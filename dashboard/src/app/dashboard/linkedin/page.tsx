@@ -54,31 +54,23 @@ const pillarLabel: Record<string, string> = {
 };
 
 export default function LinkedInPage() {
-  const [content, setContent] = useState(
-    mockLinkedInContent.map((p) => ({
-      ...p,
-      status: (p.status ?? "planned") as PostStatus,
-      publishedAt: p.status === "published" ? new Date().toISOString() : null,
-      rejectReason: null as string | null,
-    }))
-  );
+  type ContentItem = { id: string; topicTitle: string; contentPillar: string | null; draftText: string | null; suggestedPostDay: string | null; status: PostStatus; publishedAt: string | null; rejectReason: string | null; };
+  type RecItem = { id: string; type: string; area: string; suggestion: string; current: string; proposed: string; rationale: string; status: "pending" | "implemented" | "dismissed" };
+  type AlignItem = { id: string; issue: string; severity: string; snoozedUntil: Date | null };
+  type HashItem = { tag: string; category: string; selected: boolean };
+
+  const [content, setContent] = useState<ContentItem[]>([]);
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editText, setEditText] = useState("");
   const [rejectingId, setRejectingId] = useState<string | null>(null);
   const [rejectReason, setRejectReason] = useState("");
   const [copiedId, setCopiedId] = useState<string | null>(null);
-  const [recommendations, setRecommendations] = useState(
-    mockLinkedInProfile.recommendations.map((r) => ({ ...r, status: r.status as "pending" | "implemented" | "dismissed" }))
-  );
-  const [alignmentIssues, setAlignmentIssues] = useState(
-    mockLinkedInProfile.alignmentIssues
-  );
-  const [hashtags, setHashtags] = useState(
-    mockLinkedInProfile.suggestedHashtags
-  );
+  const [recommendations, setRecommendations] = useState<RecItem[]>([]);
+  const [alignmentIssues, setAlignmentIssues] = useState<AlignItem[]>([]);
+  const [hashtags, setHashtags] = useState<HashItem[]>([]);
   const [toast, setToast] = useState<string | null>(null);
   const [regeneratingId, setRegeneratingId] = useState<string | null>(null);
-  const profile = mockLinkedInProfile;
+  const profile = { completenessScore: 0, recentViews: 0, alignmentIssues: [] as AlignItem[] };
 
   function showToast(message: string) {
     setToast(message);
