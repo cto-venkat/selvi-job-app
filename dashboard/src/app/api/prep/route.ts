@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 import { getJobById } from "@/lib/queries";
 import { db } from "@/lib/db";
 import { tenants } from "@/lib/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildJdAnalysisPrompt } from "@/lib/prep/jd-analyzer";
 import { buildCompanyResearchPrompt } from "@/lib/prep/company-researcher";
@@ -102,6 +102,43 @@ function extractJson(text: string): unknown {
   }
 }
 
+// GET — load saved prep package for a job
+export async function GET(request: Request) {
+  const session = await getSession();
+  if (!session) {
+    return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const { searchParams } = new URL(request.url);
+  const jobId = searchParams.get("jobId");
+  if (!jobId) {
+    return NextResponse.json({ error: "jobId required" }, { status: 400 });
+  }
+
+  const result = await db.execute(
+    sql`SELECT prep_package, prep_status FROM jobs WHERE id = ${jobId} AND tenant_id = ${session.tenantId}`
+  );
+  const row = result.rows[0] as Record<string, unknown> | undefined;
+
+  return NextResponse.json({
+    prepPackage: row?.prep_package || null,
+    prepStatus: row?.prep_status || "none",
+  });
+}
+
+async function savePrepSection(jobId: string, tenantId: string, section: string, content: unknown) {
+  // Load existing prep_package, merge in the new section
+  const result = await db.execute(
+    sql`SELECT prep_package FROM jobs WHERE id = ${jobId} AND tenant_id = ${tenantId}`
+  );
+  const existing = (result.rows[0] as Record<string, unknown>)?.prep_package || {};
+  const updated = { ...(existing as Record<string, unknown>), [section]: content };
+
+  await db.execute(
+    sql`UPDATE jobs SET prep_package = ${JSON.stringify(updated)}::jsonb, prep_status = 'partial' WHERE id = ${jobId} AND tenant_id = ${tenantId}`
+  );
+}
+
 export async function POST(request: Request) {
   const session = await getSession();
   if (!session) {
@@ -147,10 +184,9 @@ export async function POST(request: Request) {
         );
         const raw = await callClaude(prompt);
         const parsed = extractJson(raw) as JdAnalysis | null;
-        if (parsed) {
-          return NextResponse.json({ content: parsed, raw });
-        }
-        return NextResponse.json({ content: null, raw });
+        const content = parsed || raw;
+        await savePrepSection(jobId, session.tenantId, section, content);
+        return NextResponse.json({ content, raw });
       }
 
       case "company-research": {
@@ -161,10 +197,9 @@ export async function POST(request: Request) {
         // Use Sonnet for research (needs more reasoning)
         const raw = await callClaude(prompt, "claude-3-haiku-20240307");
         const parsed = extractJson(raw) as CompanyResearch | null;
-        if (parsed) {
-          return NextResponse.json({ content: parsed, raw });
-        }
-        return NextResponse.json({ content: null, raw });
+        const compContent = parsed || raw;
+        await savePrepSection(jobId, session.tenantId, section, compContent);
+        return NextResponse.json({ content: compContent, raw });
       }
 
       case "tailored-cv": {
@@ -196,10 +231,9 @@ export async function POST(request: Request) {
         // Use Sonnet for CV writing quality
         const raw = await callClaude(prompt, "claude-3-haiku-20240307");
         const parsed = extractJson(raw);
-        if (parsed) {
-          return NextResponse.json({ content: parsed, raw });
-        }
-        return NextResponse.json({ content: null, raw });
+        const cvContent = parsed || raw;
+        await savePrepSection(jobId, session.tenantId, section, cvContent);
+        return NextResponse.json({ content: cvContent, raw });
       }
 
       case "screening-answers": {
@@ -241,6 +275,7 @@ export async function POST(request: Request) {
           answers[q] = answer.trim();
         }
 
+        await savePrepSection(jobId, session.tenantId, section, answers);
         return NextResponse.json({ content: answers });
       }
 

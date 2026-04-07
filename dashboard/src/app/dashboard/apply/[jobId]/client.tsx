@@ -123,6 +123,31 @@ export function ApplicationPackageClient({
   const [showConfirm, setShowConfirm] = useState(false);
   const [userProfile, setUserProfile] = useState<Record<string, string>>({});
 
+  // Load saved prep data on mount
+  useEffect(() => {
+    fetch(`/api/prep?jobId=${job.id}`)
+      .then((r) => r.json())
+      .then((d) => {
+        if (d.prepPackage) {
+          const pkg = d.prepPackage as Record<string, unknown>;
+          setSections((prev) =>
+            prev.map((s) => {
+              const saved = pkg[s.id];
+              if (saved) {
+                const content =
+                  typeof saved === "string"
+                    ? saved
+                    : formatContent(s.id, saved as Record<string, unknown>);
+                return { ...s, status: "ready" as const, content };
+              }
+              return s;
+            })
+          );
+        }
+      })
+      .catch(() => {});
+  }, [job.id]);
+
   // Load user profile for Quick Copy section
   useEffect(() => {
     fetch("/api/settings/profile")
