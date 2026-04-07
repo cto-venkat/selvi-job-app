@@ -284,60 +284,114 @@ def fetch_reed(config: dict) -> list:
 
 # ── RSS Source ──────────────────────────────────────────
 
-# RSS feeds for large UK employers with L&D roles
-RSS_FEEDS = {
-    "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi
-        # Greenhouse boards (common for UK companies)
-        "https://boards.greenhouse.io/embed/job_board?for=vodafone&content=rss",
-        "https://boards.greenhouse.io/embed/job_board?for=bbc&content=rss",
-        # Add more company RSS feeds here
+# ── Greenhouse / Lever Sources (free JSON APIs, no auth) ──
+
+# Target UK companies with L&D or tech roles on Greenhouse/Lever
+# Format: (board_token, display_name, ats_type)
+COMPANY_BOARDS = {
+    "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi - L&D
+        # Large UK employers likely to have L&D roles
+        ("vodafone", "Vodafone", "greenhouse"),
+        ("bbc", "BBC", "greenhouse"),
+        ("sainsburys", "Sainsbury's", "greenhouse"),
+        ("tesco", "Tesco", "greenhouse"),
+        ("unilever", "Unilever", "greenhouse"),
+        ("shell", "Shell", "greenhouse"),
+        ("deloitteuk", "Deloitte UK", "greenhouse"),
+        ("pwc", "PwC", "greenhouse"),
+        ("ey", "EY", "greenhouse"),
+        ("hsbc", "HSBC", "greenhouse"),
+        ("barclays", "Barclays", "greenhouse"),
+        ("nhs", "NHS", "greenhouse"),
     ],
-    "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat
-        # Tech company feeds
+    "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat - Tech
+        ("stripe", "Stripe", "greenhouse"),
+        ("figma", "Figma", "greenhouse"),
+        ("notion", "Notion", "greenhouse"),
+        ("datadog", "Datadog", "greenhouse"),
+        ("anthropic", "Anthropic", "greenhouse"),
+        ("vercel", "Vercel", "greenhouse"),
+        ("netflix", "Netflix", "lever"),
+        ("twilio", "Twilio", "lever"),
     ],
 }
 
 
-def fetch_rss(tenant_id: str) -> list:
-    """Fetch jobs from RSS feeds."""
-    feeds = RSS_FEEDS.get(tenant_id, [])
-    if not feeds:
+def fetch_greenhouse(board_token: str, company_name: str, tenant_id: str) -> list:
+    """Fetch jobs from Greenhouse public JSON API (free, no auth)."""
+    url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs"
+    try:
+        resp = urllib.request.urlopen(url, timeout=15, context=ssl_ctx)
+        data = json.loads(resp.read())
+    except Exception as e:
+        # 404 = company doesn't use Greenhouse, skip silently
+        if "404" not in str(e):
+            print(f"  Greenhouse error ({board_token}): {e}")
         return []
 
     jobs = []
-    for feed_url in feeds:
-        try:
-            resp = urllib.request.urlopen(feed_url, timeout=15, context=ssl_ctx)
-            xml_data = resp.read()
-            root = ET.fromstring(xml_data)
+    for r in data.get("jobs", []):
+        loc = r.get("location", {}).get("name", "UK")
+        # Only include UK-based roles
+        if not any(
+            kw in loc.lower()
+            for kw in ["uk", "united kingdom", "london", "england", "remote", "berkshire", "reading"]
+        ):
+            continue
 
-            # Handle both RSS and Atom formats
-            for item in root.iter("item"):
-                title = (item.findtext("title") or "").strip()
-                link = (item.findtext("link") or "").strip()
-                desc = (item.findtext("description") or "").strip()
-                pubdate = (item.findtext("pubDate") or "").strip()
-                company = feed_url.split("for=")[-1].split("&")[0] if "for=" in feed_url else "Unknown"
+        jobs.append({
+            "tenant_id": tenant_id,
+            "title": r.get("title", "").strip(),
+            "company": company_name,
+            "location": loc,
+            "description": "",
+            "url": r.get("absolute_url", ""),
+            "salary_min": None,
+            "salary_max": None,
+            "contract_type": "",
+            "category": "",
+            "posted_at": r.get("updated_at", ""),
+            "source": "greenhouse",
+        })
+    return jobs
 
-                jobs.append(
-                    {
-                        "tenant_id": tenant_id,
-                        "title": title,
-                        "company": company.title(),
-                        "location": "UK",
-                        "description": desc,
-                        "url": link,
-                        "salary_min": None,
-                        "salary_max": None,
-                        "contract_type": "",
-                        "category": "",
-                        "posted_at": pubdate,
-                        "source": "rss",
-                    }
-                )
-        except Exception as e:
-            print(f"  RSS error ({feed_url[:50]}...): {e}")
 
+def fetch_lever(company: str, company_name: str, tenant_id: str) -> list:
+    """Fetch jobs from Lever public JSON API (free, no auth)."""
+    url = f"https://api.lever.co/v0/postings/{company}?mode=json"
+    try:
+        req = urllib.request.Request(url)
+        req.add_header("Accept", "application/json")
+        resp = urllib.request.urlopen(req, timeout=15, context=ssl_ctx)
+        data = json.loads(resp.read())
+    except Exception as e:
+        if "404" not in str(e):
+            print(f"  Lever error ({company}): {e}")
+        return []
+
+    jobs = []
+    for r in data if isinstance(data, list) else []:
+        loc = r.get("categories", {}).get("location", "")
+        if not any(
+            kw in loc.lower()
+            for kw in ["uk", "united kingdom", "london", "england", "remote", "berkshire"]
+        ):
+            continue
+
+        jobs.append({
+            "tenant_id": tenant_id,
+            "title": r.get("text", "").strip(),
+            "company": company_name,
+            "location": loc,
+            "description": r.get("descriptionPlain", "")[:5000],
+            "url": r.get("hostedUrl", ""),
+            "salary_min": None,
+            "salary_max": None,
+            "contract_type": r.get("categories", {}).get("commitment", ""),
+            "category": r.get("categories", {}).get("team", ""),
+            "posted_at": "",
+            "source": "lever",
+        })
     return jobs
 
 
@@ -466,17 +520,27 @@ def main():
                 )
             time.sleep(3)  # Be gentle with LinkedIn
 
-    # RSS feeds (not config-driven, runs once per tenant)
-    if not SOURCE_FILTER or SOURCE_FILTER == "rss":
+    # Greenhouse / Lever company boards (not config-driven, runs once per tenant)
+    if not SOURCE_FILTER or SOURCE_FILTER in ("greenhouse", "lever", "company"):
         for tenant_id in TENANT_FILTERS:
             tenant_name = TENANT_FILTERS[tenant_id]["name"]
-            jobs = fetch_rss(tenant_id)
-            relevant = [j for j in jobs if is_relevant(tenant_id, j["title"])]
-            new = sum(1 for j in relevant if insert_job(j))
-            total_found += len(jobs)
-            total_new += new
-            if jobs:
-                print(f"  [{tenant_name}] RSS: {len(jobs)} found, {len(relevant)} relevant, {new} new")
+            boards = COMPANY_BOARDS.get(tenant_id, [])
+            for board_token, company_name, ats_type in boards:
+                if ats_type == "greenhouse":
+                    jobs = fetch_greenhouse(board_token, company_name, tenant_id)
+                else:
+                    jobs = fetch_lever(board_token, company_name, tenant_id)
+
+                relevant = [j for j in jobs if is_relevant(tenant_id, j["title"])]
+                new = sum(1 for j in relevant if insert_job(j))
+                total_found += len(jobs)
+                total_new += new
+                if relevant:
+                    print(
+                        f"  [{tenant_name}] {ats_type.title()} {company_name}: "
+                        f"{len(jobs)} UK jobs, {len(relevant)} relevant, {new} new"
+                    )
+                time.sleep(0.5)
 
     print(f"{datetime.now()}: Done. {total_found} found, {total_new} new jobs inserted.")
 
