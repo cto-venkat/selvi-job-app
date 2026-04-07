@@ -422,28 +422,35 @@ def fetch_linkedin(config: dict) -> list:
         print(f"  LinkedIn fetch error: {e}")
         return []
 
-    # Parse the HTML response — LinkedIn returns job cards as HTML
+    # Parse HTML — split by <li> tags, extract from each block
     jobs = []
-    # Each job card has class "base-card"
-    import re as re_mod
-    cards = re_mod.findall(
-        r'<div class="base-card[^"]*"[^>]*>.*?</div>\s*</div>\s*</div>',
-        html,
-        re_mod.DOTALL,
-    )
+    import html as html_mod
 
-    for card in cards[:25]:
-        title_match = re_mod.search(r'class="base-search-card__title"[^>]*>([^<]+)', card)
-        company_match = re_mod.search(r'class="base-search-card__subtitle"[^>]*>.*?<a[^>]*>([^<]+)', card, re_mod.DOTALL)
-        location_match = re_mod.search(r'class="job-search-card__location"[^>]*>([^<]+)', card)
-        link_match = re_mod.search(r'href="(https://www\.linkedin\.com/jobs/view/[^"?]+)', card)
+    items = re.split(r"<li>", html)
+
+    for item in items[1:26]:  # Skip first (before first <li>), max 25
+        title_match = re.search(
+            r'base-search-card__title[^>]*>\s*\n?\s*(.+?)\s*\n?\s*</h3>',
+            item, re.DOTALL,
+        )
+        company_match = re.search(
+            r'hidden-nested-link[^>]*>\s*\n?\s*(.+?)\s*\n?\s*</a>',
+            item, re.DOTALL,
+        )
+        location_match = re.search(
+            r'job-search-card__location[^>]*>\s*\n?\s*(.+?)\s*\n?\s*</span>',
+            item, re.DOTALL,
+        )
+        link_match = re.search(
+            r'href="(https://[^"]*linkedin\.com/jobs/view/[^"?&]+)', item,
+        )
 
         if not title_match:
             continue
 
-        title = title_match.group(1).strip()
-        company = company_match.group(1).strip() if company_match else "Unknown"
-        loc = location_match.group(1).strip() if location_match else config["location"]
+        title = html_mod.unescape(title_match.group(1).strip())
+        company = html_mod.unescape(company_match.group(1).strip()) if company_match else "Unknown"
+        loc = html_mod.unescape(location_match.group(1).strip()) if location_match else config["location"]
         link = link_match.group(1) if link_match else ""
 
         jobs.append({
@@ -451,7 +458,7 @@ def fetch_linkedin(config: dict) -> list:
             "title": title,
             "company": company,
             "location": loc,
-            "description": "",  # LinkedIn doesn't include description in list view
+            "description": "",
             "url": link,
             "salary_min": None,
             "salary_max": None,
