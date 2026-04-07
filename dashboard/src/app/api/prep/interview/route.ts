@@ -178,7 +178,7 @@ Return JSON with this structure:
 Be specific to this company and role. Reference real facts where available. Match STAR stories to predicted questions where relevant.`;
 
     const prepResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-6-20250514",
+      model: "claude-sonnet-4-5-20241022",
       max_tokens: 4096,
       messages: [{ role: "user", content: prepPrompt }],
     });

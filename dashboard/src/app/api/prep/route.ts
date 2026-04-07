@@ -159,7 +159,7 @@ export async function POST(request: Request) {
           job.title || ""
         );
         // Use Sonnet for research (needs more reasoning)
-        const raw = await callClaude(prompt, "claude-sonnet-4-6-20250514");
+        const raw = await callClaude(prompt, "claude-sonnet-4-5-20241022");
         const parsed = extractJson(raw) as CompanyResearch | null;
         if (parsed) {
           return NextResponse.json({ content: parsed, raw });
@@ -194,7 +194,7 @@ export async function POST(request: Request) {
           baseCV
         );
         // Use Sonnet for CV writing quality
-        const raw = await callClaude(prompt, "claude-sonnet-4-6-20250514");
+        const raw = await callClaude(prompt, "claude-sonnet-4-5-20241022");
         const parsed = extractJson(raw);
         if (parsed) {
           return NextResponse.json({ content: parsed, raw });

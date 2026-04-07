@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import type { Job } from "@/lib/schema";
 import type { AtsDetectionResult } from "@/lib/ats/detector";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -138,6 +138,25 @@ export function ApplicationPackageClient({
   const [activeSection, setActiveSection] = useState<string>("jd-analysis");
   const [copied, setCopied] = useState<string | null>(null);
   const [showConfirm, setShowConfirm] = useState(false);
+  const [userProfile, setUserProfile] = useState<Record<string, string>>({});
+
+  // Load user profile for Quick Copy section
+  useEffect(() => {
+    fetch("/api/settings/profile")
+      .then((r) => r.json())
+      .then((d) => {
+        const p = d.candidateProfile || {};
+        setUserProfile({
+          "Full Name": p.full_name || d.name || "",
+          "Email": p.email || d.email || "",
+          "Phone": p.phone || "",
+          "Location": p.city || "",
+          "LinkedIn": p.linkedin_url || "",
+          "Notice Period": p.notice_period || "",
+        });
+      })
+      .catch(() => {});
+  });
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState<{
     success: boolean;
@@ -227,9 +246,9 @@ export function ApplicationPackageClient({
           method: atsInfo?.hasApi ? atsInfo.platform : "manual",
           payload: atsInfo?.hasApi
             ? {
-                first_name: "Venkat",
-                last_name: "Ramachandran",
-                email: "venkat.fts@gmail.com",
+                first_name: (userProfile["Full Name"] || "").split(" ")[0],
+                last_name: (userProfile["Full Name"] || "").split(" ").slice(1).join(" "),
+                email: userProfile["Email"] || "",
               }
             : null,
         }),
@@ -385,13 +404,9 @@ export function ApplicationPackageClient({
               </CardTitle>
             </CardHeader>
             <CardContent className="px-3 pb-3 space-y-1.5">
-              {[
-                { label: "Full Name", value: "Selvi Kumar" },
-                { label: "Email", value: "chellamma.uk@gmail.com" },
-                { label: "Phone", value: "" },
-                { label: "Location", value: "Maidenhead, Berkshire" },
-              ]
-                .filter((f) => f.value)
+              {Object.entries(userProfile)
+                .filter(([, v]) => v)
+                .map(([label, value]) => ({ label, value }))
                 .map((field) => (
                   <button
                     key={field.label}
