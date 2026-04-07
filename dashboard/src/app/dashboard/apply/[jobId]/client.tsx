@@ -19,6 +19,7 @@ import {
   Check,
   Loader2,
   ChevronRight,
+  Send,
 } from "lucide-react";
 
 type PrepSection = {
@@ -136,6 +137,13 @@ export function ApplicationPackageClient({
 
   const [activeSection, setActiveSection] = useState<string>("jd-analysis");
   const [copied, setCopied] = useState<string | null>(null);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [submitResult, setSubmitResult] = useState<{
+    success: boolean;
+    method?: string;
+    error?: string;
+  } | null>(null);
 
   const allReady = sections.every(
     (s) => s.status === "ready" || s.status === "edited"
@@ -203,6 +211,44 @@ export function ApplicationPackageClient({
       if (section.status === "pending") {
         await generateSection(section.id);
       }
+    }
+  }
+
+  async function handleSubmit() {
+    setSubmitting(true);
+    setSubmitResult(null);
+
+    try {
+      const res = await fetch("/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          jobId: job.id,
+          method: atsInfo?.hasApi ? atsInfo.platform : "manual",
+          payload: atsInfo?.hasApi
+            ? {
+                first_name: "Venkat",
+                last_name: "Ramachandran",
+                email: "venkat.fts@gmail.com",
+              }
+            : null,
+        }),
+      });
+
+      const data = await res.json();
+
+      if (res.ok && data.success) {
+        setSubmitResult({ success: true, method: data.method });
+      } else {
+        setSubmitResult({ success: false, error: data.error || "Submission failed" });
+      }
+    } catch (err) {
+      setSubmitResult({
+        success: false,
+        error: err instanceof Error ? err.message : "Network error",
+      });
+    } finally {
+      setSubmitting(false);
     }
   }
 
@@ -439,6 +485,82 @@ export function ApplicationPackageClient({
           </CardContent>
         </Card>
       </div>
+
+      {/* Submit Application Section */}
+      <Card className={allReady ? "border-green-300 dark:border-green-800" : "border-dashed"}>
+        <CardHeader>
+          <CardTitle className="text-lg flex items-center gap-2">
+            <Send className="h-5 w-5" />
+            Submit Application
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {!allReady ? (
+            <p className="text-sm text-muted-foreground">
+              Generate all sections above before submitting. Click "Generate All" to prepare your application package.
+            </p>
+          ) : showConfirm ? (
+            <div className="space-y-4">
+              <div className="rounded-lg border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-950/30 p-4">
+                <p className="text-sm font-medium text-amber-800 dark:text-amber-200 mb-2">
+                  Confirm Application Submission
+                </p>
+                <p className="text-sm text-amber-700 dark:text-amber-300">
+                  You are about to apply to <strong>{job.title}</strong> at <strong>{job.company}</strong>.
+                  {atsInfo?.submissionMethod === "api"
+                    ? ` This will submit directly via ${atsInfo.platform} API.`
+                    : " Your application will be recorded and you can use the copy-paste package to apply on the portal."}
+                </p>
+              </div>
+              <div className="flex gap-2">
+                <Button
+                  onClick={handleSubmit}
+                  disabled={submitting}
+                  className="bg-green-600 hover:bg-green-700"
+                >
+                  {submitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    <>
+                      <Check className="h-4 w-4 mr-1.5" />
+                      Yes, Submit Application
+                    </>
+                  )}
+                </Button>
+                <Button variant="outline" onClick={() => setShowConfirm(false)}>
+                  Cancel
+                </Button>
+              </div>
+              {submitResult && (
+                <div className={`rounded-lg p-3 text-sm ${
+                  submitResult.success
+                    ? "bg-green-50 dark:bg-green-950/30 text-green-800 dark:text-green-200"
+                    : "bg-red-50 dark:bg-red-950/30 text-red-800 dark:text-red-200"
+                }`}>
+                  {submitResult.success
+                    ? `Application submitted via ${submitResult.method}! Tracked in your pipeline.`
+                    : `Error: ${submitResult.error}`}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="flex items-center gap-4">
+              <Button onClick={() => setShowConfirm(true)} className="bg-green-600 hover:bg-green-700">
+                <Send className="h-4 w-4 mr-1.5" />
+                Submit Application
+              </Button>
+              <span className="text-sm text-muted-foreground">
+                {atsInfo?.submissionMethod === "api"
+                  ? `Will submit via ${atsInfo.platform} API`
+                  : "Will record application + provide copy-paste package"}
+              </span>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   );
 }
