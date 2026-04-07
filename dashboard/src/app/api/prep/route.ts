@@ -63,7 +63,7 @@ async function getUserProfile(tenantId: string): Promise<UserProfile | null> {
 
 async function callClaude(
   prompt: string,
-  model: string = "claude-3-haiku-20240307"
+  model: string = "claude-haiku-4-5-20251001"
 ): Promise<string> {
   const response = await anthropic.messages.create({
     model,
@@ -195,7 +195,7 @@ export async function POST(request: Request) {
           job.title || ""
         );
         // Use Sonnet for research (needs more reasoning)
-        const raw = await callClaude(prompt, "claude-3-haiku-20240307");
+        const raw = await callClaude(prompt, "claude-haiku-4-5-20251001");
         const parsed = extractJson(raw) as CompanyResearch | null;
         const compContent = parsed || raw;
         await savePrepSection(jobId, session.tenantId, section, compContent);
@@ -229,7 +229,7 @@ export async function POST(request: Request) {
           baseCV
         );
         // Use Sonnet for CV writing quality
-        const raw = await callClaude(prompt, "claude-3-haiku-20240307");
+        const raw = await callClaude(prompt, "claude-haiku-4-5-20251001");
         const parsed = extractJson(raw);
         const cvContent = parsed || raw;
         await savePrepSection(jobId, session.tenantId, section, cvContent);
