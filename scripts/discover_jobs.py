@@ -100,7 +100,7 @@ WHATSAPP_RECIPIENTS = {
 
 
 def send_whatsapp(to: str, message: str):
-    """Send a WhatsApp text message."""
+    """Send a WhatsApp text message (requires 24-hour window)."""
     payload = json.dumps({
         "messaging_product": "whatsapp",
         "to": to,
@@ -117,9 +117,55 @@ def send_whatsapp(to: str, message: str):
     req.add_header("Content-Type", "application/json")
 
     try:
-        urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+        resp = urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+        return True
+    except urllib.error.HTTPError as e:
+        # If text fails (outside 24h window), try template
+        if e.code == 400:
+            return False
+        print(f"  WhatsApp send error: {e}")
+        return False
     except Exception as e:
         print(f"  WhatsApp send error: {e}")
+        return False
+
+
+def send_whatsapp_template(to: str, name: str, tenant_name: str,
+                           count: str, top_title: str, top_company: str):
+    """Send a WhatsApp template message (works anytime, no 24h window needed)."""
+    payload = json.dumps({
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "template",
+        "template": {
+            "name": name,
+            "language": {"code": "en"},
+            "components": [{
+                "type": "body",
+                "parameters": [
+                    {"type": "text", "text": tenant_name},
+                    {"type": "text", "text": count},
+                    {"type": "text", "text": top_title},
+                    {"type": "text", "text": top_company},
+                ],
+            }],
+        },
+    }).encode()
+
+    req = urllib.request.Request(
+        f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages",
+        data=payload,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {WHATSAPP_TOKEN}")
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+        return True
+    except Exception as e:
+        print(f"  WhatsApp template error: {e}")
+        return False
 
 
 DRY_RUN = "--dry-run" in sys.argv
@@ -774,7 +820,6 @@ def main():
 
     # Send WhatsApp notifications for new jobs
     if total_new > 0 and not DRY_RUN:
-        # Get new jobs per tenant (inserted in last 5 minutes)
         for tenant_id, filt in TENANT_FILTERS.items():
             recipient = WHATSAPP_RECIPIENTS.get(tenant_id)
             if not recipient:
@@ -794,21 +839,32 @@ def main():
             if not lines:
                 continue
 
+            # Get top match for template
+            parts = lines[0].split("|")
+            top_title = parts[0].strip() if parts else "New role"
+            top_company = parts[1].strip() if len(parts) > 1 else "Unknown"
+
+            # Try text message first (works within 24h window)
             msg_lines = [f"🔔 {len(lines)} new {filt['name']} jobs found:\n"]
             for line in lines[:8]:
-                parts = line.split("|")
-                if len(parts) >= 2:
-                    title = parts[0].strip()
-                    company = parts[1].strip()
-                    msg_lines.append(f"• {title} — {company}")
-
+                p = line.split("|")
+                if len(p) >= 2:
+                    msg_lines.append(f"• {p[0].strip()} — {p[1].strip()}")
             if len(lines) > 8:
                 msg_lines.append(f"\n+{len(lines) - 8} more")
+            msg_lines.append(f"\n📋 https://app.deploy.apiloom.io/dashboard/jobs")
 
-            msg_lines.append(f"\n📋 View all: https://app.deploy.apiloom.io/dashboard/jobs")
+            sent = send_whatsapp(recipient, "\n".join(msg_lines))
 
-            send_whatsapp(recipient, "\n".join(msg_lines))
-            print(f"  WhatsApp sent to {filt['name']}: {len(lines)} new jobs")
+            # If text failed (outside 24h window), try template
+            if not sent:
+                sent = send_whatsapp_template(
+                    recipient, "job_alert", filt["name"],
+                    str(len(lines)), top_title, top_company,
+                )
+
+            if sent:
+                print(f"  WhatsApp sent to {filt['name']}: {len(lines)} new jobs")
 
 
 if __name__ == "__main__":
