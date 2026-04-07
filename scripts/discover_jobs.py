@@ -517,6 +517,16 @@ FIRECRAWL_URLS = {
         ("https://opportunities.vodafone.com/search/?q=learning+development&locationsearch=United+Kingdom", "vodafone"),
         # Barclays
         ("https://search.jobs.barclays/search-jobs/learning%20development/United%20Kingdom/22144/1", "barclays"),
+        # Unilever
+        ("https://careers.unilever.com/search-jobs/learning%20and%20development/United%20Kingdom/34155/1", "unilever"),
+        # Robert Half (specialist recruiter)
+        ("https://www.roberthalf.com/gb/en/jobs?query=learning+and+development", "roberthalf"),
+        # Michael Page
+        ("https://www.michaelpage.co.uk/jobs/learning-and-development", "michaelpage"),
+        # Hays
+        ("https://www.hays.co.uk/jobs?q=learning+and+development", "hays"),
+        # Civil Service Jobs
+        ("https://www.civilservicejobs.service.gov.uk/csr/index.cgi?pageaction=searchbyquick&keyword=learning+and+development&searchpage=1", "civilservice"),
     ],
     "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat - Senior Eng Leadership
         # CV-Library
@@ -529,6 +539,14 @@ FIRECRAWL_URLS = {
         # Barclays
         ("https://search.jobs.barclays/search-jobs/CTO/United%20Kingdom/22144/1", "barclays"),
         ("https://search.jobs.barclays/search-jobs/director%20engineering/United%20Kingdom/22144/1", "barclays"),
+        # Unilever
+        ("https://careers.unilever.com/search-jobs/director%20engineering/United%20Kingdom/34155/1", "unilever"),
+        # Michael Page
+        ("https://www.michaelpage.co.uk/jobs/cto", "michaelpage"),
+        ("https://www.michaelpage.co.uk/jobs/vp-engineering", "michaelpage"),
+        # Hays
+        ("https://www.hays.co.uk/jobs?q=CTO", "hays"),
+        ("https://www.hays.co.uk/jobs?q=director+of+engineering", "hays"),
     ],
 }
 
@@ -579,6 +597,11 @@ def fetch_firecrawl(tenant_id: str) -> list:
                 r'\[([^\]]{10,100})\]\((https://opportunities\.vodafone\.com/job/[^\)]+)\)',
                 r'\[([^\]]{10,100})\]\((https://search\.jobs\.barclays/job/[^\)]+)\)',
                 r'\[([^\]]{10,100})\]\((https://www\.totaljobs\.com/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://careers\.unilever\.com/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.roberthalf\.com/gb/en/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.michaelpage\.co\.uk/jobs/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.hays\.co\.uk/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.civilservicejobs\.service\.gov\.uk/[^\)]+)\)',
             ]
 
             for pattern in link_patterns:
