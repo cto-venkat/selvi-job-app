@@ -501,18 +501,34 @@ def fetch_linkedin(config: dict) -> list:
 FIRECRAWL_KEY = "fc-03df5ddce46244da9e5d5b926bcddb0a"
 
 FIRECRAWL_URLS = {
-    "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi
-        ("https://www.totaljobs.com/jobs/learning-and-development-manager/in-berkshire?radius=30", "totaljobs"),
-        ("https://www.totaljobs.com/jobs/head-of-learning-and-development/in-london?radius=15", "totaljobs"),
+    "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi - L&D
+        # CV-Library
         ("https://www.cv-library.co.uk/search-jobs?q=learning+and+development+manager&geo=Berkshire&distance=30", "cv-library"),
         ("https://www.cv-library.co.uk/search-jobs?q=head+of+learning+development&geo=London&distance=15", "cv-library"),
+        ("https://www.cv-library.co.uk/search-jobs?q=L%26D+manager&geo=Berkshire&distance=30", "cv-library"),
+        # NHS Jobs
+        ("https://www.jobs.nhs.uk/candidate/search/results?keyword=learning+and+development&distance=50", "nhs-jobs"),
+        ("https://www.jobs.nhs.uk/candidate/search/results?keyword=training+development+manager&distance=50", "nhs-jobs"),
+        # CharityJob
+        ("https://www.charityjob.co.uk/jobs/learning-and-development", "charityjob"),
+        # Frazer Jones (specialist L&D recruiter)
+        ("https://www.frazerjones.com/learning-and-development-jobs/", "frazerjones"),
+        # Vodafone Workday
+        ("https://opportunities.vodafone.com/search/?q=learning+development&locationsearch=United+Kingdom", "vodafone"),
+        # Barclays
+        ("https://search.jobs.barclays/search-jobs/learning%20development/United%20Kingdom/22144/1", "barclays"),
     ],
-    "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat
-        ("https://www.totaljobs.com/jobs/cto/in-london", "totaljobs"),
-        ("https://www.totaljobs.com/jobs/vp-of-engineering/in-london", "totaljobs"),
-        ("https://www.totaljobs.com/jobs/director-of-engineering/in-london", "totaljobs"),
-        ("https://www.cv-library.co.uk/search-jobs?q=CTO&geo=London&distance=15&salarymin=200000", "cv-library"),
+    "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat - Senior Eng Leadership
+        # CV-Library
+        ("https://www.cv-library.co.uk/search-jobs?q=CTO&geo=London&distance=15", "cv-library"),
         ("https://www.cv-library.co.uk/search-jobs?q=VP+engineering&geo=London&distance=15", "cv-library"),
+        ("https://www.cv-library.co.uk/search-jobs?q=director+of+engineering&geo=London&distance=15", "cv-library"),
+        # Vodafone
+        ("https://opportunities.vodafone.com/search/?q=CTO&locationsearch=United+Kingdom", "vodafone"),
+        ("https://opportunities.vodafone.com/search/?q=director+engineering&locationsearch=United+Kingdom", "vodafone"),
+        # Barclays
+        ("https://search.jobs.barclays/search-jobs/CTO/United%20Kingdom/22144/1", "barclays"),
+        ("https://search.jobs.barclays/search-jobs/director%20engineering/United%20Kingdom/22144/1", "barclays"),
     ],
 }
 
@@ -551,48 +567,35 @@ def fetch_firecrawl(tenant_id: str) -> list:
             if not md:
                 continue
 
-            # Parse job titles from markdown — both sites use **title** or ## [title] patterns
-            import re as re_mod
-
-            # TotalJobs pattern: [Job Title](url) or **Job Title**
+            # Parse job titles from markdown — generic multi-site parser
             jobs_found = []
 
-            if source_name == "totaljobs":
-                # TotalJobs uses links with job titles
-                matches = re_mod.findall(
-                    r'\[([^\]]{10,100})\]\((https://www\.totaljobs\.com/job/[^\)]+)\)',
-                    md,
-                )
-                for title, link in matches[:25]:
-                    # Try to extract company from nearby text
-                    idx = md.find(link)
-                    context = md[idx:idx + 300] if idx > 0 else ""
-                    company_match = re_mod.search(r'\n([A-Z][^\n]{2,50})\n', context)
-                    company = company_match.group(1).strip() if company_match else "Unknown"
+            # Try site-specific link patterns first, then fallback to bold text
+            link_patterns = [
+                r'\[([^\]]{10,100})\]\((https://www\.cv-library\.co\.uk/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.charityjob\.co\.uk/jobs/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.jobs\.nhs\.uk/candidate/jobadvert/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.frazerjones\.com/jobs/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://opportunities\.vodafone\.com/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://search\.jobs\.barclays/job/[^\)]+)\)',
+                r'\[([^\]]{10,100})\]\((https://www\.totaljobs\.com/job/[^\)]+)\)',
+            ]
 
-                    jobs_found.append({
-                        "title": title.strip(),
-                        "company": company,
-                        "url": link,
-                    })
+            for pattern in link_patterns:
+                matches = re.findall(pattern, md)
+                if matches:
+                    for title, link in matches[:25]:
+                        jobs_found.append({"title": title.strip(), "company": "Unknown", "url": link})
+                    break
 
-            elif source_name == "cv-library":
-                # CV-Library uses **title** bold patterns with links
-                matches = re_mod.findall(
-                    r'\*\*\[?([^\]*]{10,100})\]?\*\*',
-                    md,
-                )
-                links = re_mod.findall(
-                    r'\((https://www\.cv-library\.co\.uk/job/[^\)]+)\)',
-                    md,
-                )
-                for i, title in enumerate(matches[:25]):
-                    link = links[i] if i < len(links) else ""
-                    jobs_found.append({
-                        "title": title.strip(),
-                        "company": "Unknown",
-                        "url": link,
-                    })
+            # Fallback: bold text titles (NHS, Barclays use **Title** format)
+            if not jobs_found:
+                bolds = re.findall(r'\*\*([^\*]{15,100})\*\*', md)
+                skip_words = ["search", "filter", "sign", "register", "cookie", "skip", "log in", "view all"]
+                for b in bolds[:25]:
+                    if any(s in b.lower() for s in skip_words):
+                        continue
+                    jobs_found.append({"title": b.strip(), "company": "Unknown", "url": ""})
 
             for j in jobs_found:
                 all_jobs.append({
