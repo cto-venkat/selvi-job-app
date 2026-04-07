@@ -73,16 +73,32 @@ function formatContent(sectionId: string, data: Record<string, unknown>): string
     }
     case "company-research": {
       const lines: string[] = [];
-      if (data.overview) lines.push(`OVERVIEW: ${data.overview}`, "");
-      if (data.size) lines.push(`SIZE: ${data.size}`);
-      if (data.sector) lines.push(`SECTOR: ${data.sector}`);
-      if (data.recentNews) lines.push(`\nRECENT NEWS: ${data.recentNews}`);
-      if (Array.isArray(data.talkingPoints)) {
-        lines.push("", "TALKING POINTS FOR APPLICATION:", ...data.talkingPoints.map((p: string) => `  - ${p}`));
+      const overview = (data.companyOverview || data.overview || "") as string;
+      const size = (data.companySize || data.size || "") as string;
+      const sector = (data.sector || "") as string;
+      const growth = (data.growthStage || "") as string;
+      const news = (data.recentNews || []) as string[];
+      const talking = (data.talkingPoints || []) as string[];
+      const hiring = (data.hiringSignals || []) as string[];
+      const sentiment = (data.employeeSentiment || "") as string;
+      const subSectors = (data.subSectors || []) as string[];
+
+      if (overview) lines.push(`OVERVIEW:\n${overview}`, "");
+      if (size) lines.push(`SIZE: ${size}`);
+      if (sector) lines.push(`SECTOR: ${sector}${subSectors.length ? ` (${subSectors.join(", ")})` : ""}`);
+      if (growth) lines.push(`STAGE: ${growth}`);
+      if (sentiment) lines.push(`EMPLOYEE SENTIMENT: ${sentiment}`);
+      lines.push("");
+      if (Array.isArray(news) && news.length) {
+        lines.push("RECENT NEWS:", ...news.map((n: string) => `  - ${n}`), "");
       }
-      if (Array.isArray(data.hiringSignals)) {
-        lines.push("", "HIRING SIGNALS:", ...data.hiringSignals.map((s: string) => `  - ${s}`));
+      if (Array.isArray(hiring) && hiring.length) {
+        lines.push("HIRING SIGNALS:", ...hiring.map((s: string) => `  - ${s}`), "");
       }
+      if (Array.isArray(talking) && talking.length) {
+        lines.push("TALKING POINTS FOR APPLICATION:", ...talking.map((p: string) => `  - ${p}`));
+      }
+      if (lines.length <= 2) return JSON.stringify(data, null, 2);
       return lines.join("\n");
     }
     case "tailored-cv": {
