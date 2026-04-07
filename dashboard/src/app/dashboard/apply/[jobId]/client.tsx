@@ -33,24 +33,42 @@ type PrepSection = {
 function formatContent(sectionId: string, data: Record<string, unknown>): string {
   switch (sectionId) {
     case "jd-analysis": {
+      // Handle nested structure: data.job_analysis or flat data
+      const jd = (data.job_analysis as Record<string, unknown>) || data;
+      const reqs = (jd.requirements as Record<string, unknown>) || {};
       const lines: string[] = [];
-      if (Array.isArray(data.mustHaveRequirements)) {
-        lines.push("MUST-HAVE REQUIREMENTS:", ...data.mustHaveRequirements.map((r: string) => `  - ${r}`), "");
-      }
-      if (Array.isArray(data.niceToHaveRequirements)) {
-        lines.push("NICE-TO-HAVE:", ...data.niceToHaveRequirements.map((r: string) => `  - ${r}`), "");
-      }
-      if (Array.isArray(data.requiredSkills)) {
-        lines.push("KEY SKILLS:", ...data.requiredSkills.map((s: string) => `  - ${s}`), "");
-      }
-      if (Array.isArray(data.likelyScreeningQuestions)) {
-        lines.push("LIKELY SCREENING QUESTIONS:", ...data.likelyScreeningQuestions.map((q: string) => `  - ${q}`), "");
-      }
-      if (data.seniorityLevel) lines.push(`SENIORITY: ${data.seniorityLevel}`);
-      if (data.remotePolicy) lines.push(`REMOTE POLICY: ${data.remotePolicy}`);
-      if (Array.isArray(data.keyTerminology)) {
-        lines.push("", "KEY TERMINOLOGY TO USE:", ...data.keyTerminology.map((t: string) => `  - ${t}`));
-      }
+
+      if (jd.job_title) lines.push(`ROLE: ${jd.job_title} at ${jd.company_name || ""}`);
+      if (jd.seniority_level) lines.push(`SENIORITY: ${jd.seniority_level}`);
+      if (jd.remote_working) lines.push(`REMOTE: ${jd.remote_working}`);
+      if (jd.employment_type) lines.push(`TYPE: ${jd.employment_type}`);
+      lines.push("");
+
+      const mustHaves = (reqs.must_haves as string[]) || (data.mustHaveRequirements as string[]) || [];
+      if (mustHaves.length) lines.push("MUST-HAVE REQUIREMENTS:", ...mustHaves.map((r: string) => `  - ${r}`), "");
+
+      const niceToHaves = (reqs.nice_to_haves as string[]) || (data.niceToHaveRequirements as string[]) || [];
+      if (niceToHaves.length) lines.push("NICE-TO-HAVE:", ...niceToHaves.map((r: string) => `  - ${r}`), "");
+
+      const skills = (jd.technical_skills as string[]) || (data.requiredSkills as string[]) || [];
+      if (skills.length) lines.push("TECHNICAL SKILLS:", ...skills.map((s: string) => `  - ${s}`), "");
+
+      const softSkills = (jd.soft_skills as string[]) || [];
+      if (softSkills.length) lines.push("SOFT SKILLS:", ...softSkills.map((s: string) => `  - ${s}`), "");
+
+      const questions = (jd.likely_screening_questions as string[]) || (data.likelyScreeningQuestions as string[]) || [];
+      if (questions.length) lines.push("LIKELY SCREENING QUESTIONS:", ...questions.map((q: string) => `  - ${q}`), "");
+
+      const keywords = (jd.ats_keywords as string[]) || (data.keyTerminology as string[]) || [];
+      if (keywords.length) lines.push("ATS KEYWORDS:", ...keywords.map((k: string) => `  - ${k}`), "");
+
+      const guide = (jd.application_preparation_guide as Record<string, unknown>) || {};
+      const cvFocus = (guide.cv_focus_areas as string[]) || [];
+      if (cvFocus.length) lines.push("CV FOCUS AREAS:", ...cvFocus.map((c: string) => `  - ${c}`), "");
+      if (guide.cover_letter_approach) lines.push("COVER LETTER APPROACH:", `  ${guide.cover_letter_approach}`, "");
+
+      // Fallback: if nothing matched, dump as readable text
+      if (lines.length <= 2) return JSON.stringify(data, null, 2);
       return lines.join("\n");
     }
     case "company-research": {
@@ -88,11 +106,15 @@ function formatContent(sectionId: string, data: Record<string, unknown>): string
     case "screening-answers": {
       const lines: string[] = [];
       for (const [question, answer] of Object.entries(data)) {
-        lines.push(`Q: ${question}`, `A: ${answer as string}`, "");
+        if (typeof answer === "string") {
+          lines.push(`Q: ${question}`, `A: ${answer}`, "");
+        }
       }
+      if (lines.length === 0) return JSON.stringify(data, null, 2);
       return lines.join("\n");
     }
     default:
+      // Generic fallback — try to render any nested object readably
       return JSON.stringify(data, null, 2);
   }
 }
