@@ -52,12 +52,31 @@ TENANT_FILTERS = {
             re.IGNORECASE,
         ),
     },
-    "48d629f3-1b10-4262-b50f-166176a82dc7": {  # Venkat - Tech
+    "48d629f3-1b10-4262-b50f-166176a82dc7": {  # Venkat - Senior Eng Leadership
         "name": "Venkat",
         "patterns": re.compile(
-            r"software|engineer|developer|tech lead|CTO|architect|"
-            r"devops|SRE|platform|backend|frontend|full.stack|"
-            r"engineering manager|technical lead",
+            r"CTO|chief.technolog|"
+            r"VP.engineer|VP.of.engineer|VP.technolog|VP.of.technolog|"
+            r"vice.president.engineer|vice.president.technolog|"
+            r"senior.director.{0,5}engineer|director.of.engineer|"
+            r"director.{0,3}software|director.{0,3}platform|"
+            r"head.of.engineer|SVP.engineer|"
+            r"director.{0,3}architect",
+            re.IGNORECASE,
+        ),
+        "exclude": re.compile(
+            r"sales|marketing|finance|legal|HR|HRBP|product.market|"
+            r"account.executive|account.manager|business.develop|"
+            r"field.market|alliance|recruitment|staffing|"
+            r"silicon|verification|logical.design|"
+            r"non.profit|public.sector|fire.engineer|"
+            r"structural|civil|mechanical|construction|"
+            r"commercial.director|product.director|product.design|"
+            r"data.engineer|ERP|oracle.fusion|"
+            r"fractional|co.founder|founder.track|"
+            r"relocate.to|singapore|program.manager|"
+            r"major.accounts|solution.consulting|technical.account|"
+            r"product.management|solutions.architect",
             re.IGNORECASE,
         ),
     },

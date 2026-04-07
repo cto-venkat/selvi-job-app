@@ -54,7 +54,7 @@ export function PipelineFunnel({ data }: { data: FunnelData }) {
                     <ChevronRight className="h-4 w-4 text-muted-foreground" />
                     {conversionPct !== null && i < stages.length - 1 && (
                       <span className="text-[9px] font-mono text-muted-foreground whitespace-nowrap">
-                        {Math.round((values[i + 1] / values[i]) * 100)}%
+                        {values[i] > 0 ? Math.round((values[i + 1] / values[i]) * 100) : 0}%
                       </span>
                     )}
                   </div>
