@@ -52,31 +52,40 @@ TENANT_FILTERS = {
             re.IGNORECASE,
         ),
     },
-    "48d629f3-1b10-4262-b50f-166176a82dc7": {  # Venkat - Senior Eng Leadership
+    "48d629f3-1b10-4262-b50f-166176a82dc7": {  # Venkat - Senior Eng Leadership ONLY
         "name": "Venkat",
         "patterns": re.compile(
-            r"CTO|chief.technolog|"
-            r"VP.engineer|VP.of.engineer|VP.technolog|VP.of.technolog|"
-            r"vice.president.engineer|vice.president.technolog|"
-            r"senior.director.{0,5}engineer|director.of.engineer|"
-            r"director.{0,3}software|director.{0,3}platform|"
-            r"head.of.engineer|SVP.engineer|"
-            r"director.{0,3}architect",
+            # Must explicitly be software/technology engineering leadership
+            r"\bCTO\b|chief.technology.officer|"
+            r"VP.of.engineering|VP.engineering|VP.of.technology|"
+            r"vice.president.of.engineering|vice.president.engineering|"
+            r"senior.director.{0,10}(software|engineering|technology|platform)|"
+            r"director.of.(software|engineering|technology|platform)|"
+            r"director.{0,3}software.engineer|"
+            r"head.of.(software.)?engineer",
             re.IGNORECASE,
         ),
         "exclude": re.compile(
-            r"sales|marketing|finance|legal|HR|HRBP|product.market|"
-            r"account.executive|account.manager|business.develop|"
-            r"field.market|alliance|recruitment|staffing|"
-            r"silicon|verification|logical.design|"
-            r"non.profit|public.sector|fire.engineer|"
-            r"structural|civil|mechanical|construction|"
-            r"commercial.director|product.director|product.design|"
-            r"data.engineer|ERP|oracle.fusion|"
+            # Hard exclude — if ANY of these match, skip the job
+            r"\bPA\b|personal.assistant|executive.assistant|EA.to|"
+            r"sales|marketing|finance|legal|HR|HRBP|"
+            r"account.(director|executive|manager)|"
+            r"operations.director|managing.director|commercial.director|"
+            r"tax|audit|compliance|governance|"
+            r"data.science|data.engineer|AI.?ML|machine.learn|clinical.AI|"
+            r"product.manag|product.director|product.design|product.owner|product.lead|"
+            r"field.(engineer|chief)|network.reliab|reliability.engineer|"
+            r"electrical|civil|mechanical|construction|MEP|structural|"
+            r"quality.system|cyber.security|security.director|"
+            r"solutions.architect|solutions.consult|solution.consult|"
+            r"major.accounts|technical.account|"
             r"fractional|co.founder|founder.track|"
-            r"relocate.to|singapore|program.manager|"
-            r"major.accounts|solution.consulting|technical.account|"
-            r"product.management|solutions.architect",
+            r"producer.director|creative.director|"
+            r"R.?D.tax|clinical|frontier.technolog|"
+            r"relocate.to|singapore|"
+            r"technology.director|associate.director|"
+            r"NodeJS|South.Yorkshire|"
+            r"new.business.director",
             re.IGNORECASE,
         ),
     },
