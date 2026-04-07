@@ -290,29 +290,35 @@ def fetch_reed(config: dict) -> list:
 # Format: (board_token, display_name, ats_type)
 COMPANY_BOARDS = {
     "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi - L&D
-        # Large UK employers likely to have L&D roles
-        ("vodafone", "Vodafone", "greenhouse"),
-        ("bbc", "BBC", "greenhouse"),
-        ("sainsburys", "Sainsbury's", "greenhouse"),
-        ("tesco", "Tesco", "greenhouse"),
-        ("unilever", "Unilever", "greenhouse"),
-        ("shell", "Shell", "greenhouse"),
-        ("deloitteuk", "Deloitte UK", "greenhouse"),
-        ("pwc", "PwC", "greenhouse"),
-        ("ey", "EY", "greenhouse"),
-        ("hsbc", "HSBC", "greenhouse"),
-        ("barclays", "Barclays", "greenhouse"),
-        ("nhs", "NHS", "greenhouse"),
+        # UK companies that may have L&D roles (verified Greenhouse boards)
+        ("wpp", "WPP", "greenhouse"),          # 37 UK jobs, media/advertising
+        ("monzo", "Monzo", "greenhouse"),       # 50 UK jobs, fintech
+        ("skyscanner", "Skyscanner", "greenhouse"),  # 28 UK jobs, Edinburgh
+        ("gymshark", "Gymshark", "greenhouse"), # 9 UK jobs, Birmingham
+        ("gocardless", "GoCardless", "greenhouse"),  # 16 UK jobs, London
+        ("hellofresh", "HelloFresh", "greenhouse"),  # 32 UK jobs
+        ("ocadogroup", "Ocado Group", "greenhouse"), # 7 UK jobs
+        ("ovoenergy", "OVO Energy", "greenhouse"),   # 2 UK jobs, Bristol
+        ("graphcore", "Graphcore", "greenhouse"),     # 70 UK jobs, Bristol
+        ("databricks", "Databricks", "greenhouse"),   # 46 UK jobs
     ],
     "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat - Tech
-        ("stripe", "Stripe", "greenhouse"),
-        ("figma", "Figma", "greenhouse"),
-        ("notion", "Notion", "greenhouse"),
-        ("datadog", "Datadog", "greenhouse"),
-        ("anthropic", "Anthropic", "greenhouse"),
-        ("vercel", "Vercel", "greenhouse"),
-        ("netflix", "Netflix", "lever"),
-        ("twilio", "Twilio", "lever"),
+        ("stripe", "Stripe", "greenhouse"),      # 29 UK jobs
+        ("figma", "Figma", "greenhouse"),         # 16 UK jobs
+        ("datadog", "Datadog", "greenhouse"),     # 20 UK jobs
+        ("vercel", "Vercel", "greenhouse"),       # 9 UK jobs
+        ("twilio", "Twilio", "greenhouse"),       # 7 UK jobs
+        ("monzo", "Monzo", "greenhouse"),         # 50 UK jobs
+        ("deepmind", "Google DeepMind", "greenhouse"),  # 22 UK jobs
+        ("wayve", "Wayve", "greenhouse"),         # 23 UK jobs
+        ("databricks", "Databricks", "greenhouse"),  # 46 UK jobs
+        ("graphcore", "Graphcore", "greenhouse"),    # 70 UK jobs
+        ("skyscanner", "Skyscanner", "greenhouse"),  # 28 UK jobs
+        ("gocardless", "GoCardless", "greenhouse"),  # 16 UK jobs
+        ("tripactions", "Navan", "greenhouse"),      # 19 UK jobs
+        ("form3", "Form3", "greenhouse"),            # 4 UK jobs
+        ("truelayer", "TrueLayer", "greenhouse"),    # 4 UK jobs
+        ("airtable", "Airtable", "greenhouse"),      # 8 UK jobs
     ],
 }
 
