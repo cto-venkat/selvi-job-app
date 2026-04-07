@@ -30,109 +30,54 @@ type PrepSection = {
   content: string | null;
 };
 
-function formatContent(sectionId: string, data: Record<string, unknown>): string {
-  switch (sectionId) {
-    case "jd-analysis": {
-      // Handle nested structure: data.job_analysis or flat data
-      const jd = (data.job_analysis as Record<string, unknown>) || data;
-      const reqs = (jd.requirements as Record<string, unknown>) || {};
-      const lines: string[] = [];
+function formatContent(_sectionId: string, data: Record<string, unknown>): string {
+  // Universal formatter — handles any JSON structure Claude returns
+  return renderValue(data, 0);
+}
 
-      if (jd.job_title) lines.push(`ROLE: ${jd.job_title} at ${jd.company_name || ""}`);
-      if (jd.seniority_level) lines.push(`SENIORITY: ${jd.seniority_level}`);
-      if (jd.remote_working) lines.push(`REMOTE: ${jd.remote_working}`);
-      if (jd.employment_type) lines.push(`TYPE: ${jd.employment_type}`);
-      lines.push("");
+function renderValue(value: unknown, depth: number): string {
+  if (value === null || value === undefined) return "";
+  if (typeof value === "string") return value;
+  if (typeof value === "number" || typeof value === "boolean") return String(value);
 
-      const mustHaves = (reqs.must_haves as string[]) || (data.mustHaveRequirements as string[]) || [];
-      if (mustHaves.length) lines.push("MUST-HAVE REQUIREMENTS:", ...mustHaves.map((r: string) => `  - ${r}`), "");
-
-      const niceToHaves = (reqs.nice_to_haves as string[]) || (data.niceToHaveRequirements as string[]) || [];
-      if (niceToHaves.length) lines.push("NICE-TO-HAVE:", ...niceToHaves.map((r: string) => `  - ${r}`), "");
-
-      const skills = (jd.technical_skills as string[]) || (data.requiredSkills as string[]) || [];
-      if (skills.length) lines.push("TECHNICAL SKILLS:", ...skills.map((s: string) => `  - ${s}`), "");
-
-      const softSkills = (jd.soft_skills as string[]) || [];
-      if (softSkills.length) lines.push("SOFT SKILLS:", ...softSkills.map((s: string) => `  - ${s}`), "");
-
-      const questions = (jd.likely_screening_questions as string[]) || (data.likelyScreeningQuestions as string[]) || [];
-      if (questions.length) lines.push("LIKELY SCREENING QUESTIONS:", ...questions.map((q: string) => `  - ${q}`), "");
-
-      const keywords = (jd.ats_keywords as string[]) || (data.keyTerminology as string[]) || [];
-      if (keywords.length) lines.push("ATS KEYWORDS:", ...keywords.map((k: string) => `  - ${k}`), "");
-
-      const guide = (jd.application_preparation_guide as Record<string, unknown>) || {};
-      const cvFocus = (guide.cv_focus_areas as string[]) || [];
-      if (cvFocus.length) lines.push("CV FOCUS AREAS:", ...cvFocus.map((c: string) => `  - ${c}`), "");
-      if (guide.cover_letter_approach) lines.push("COVER LETTER APPROACH:", `  ${guide.cover_letter_approach}`, "");
-
-      // Fallback: if nothing matched, dump as readable text
-      if (lines.length <= 2) return JSON.stringify(data, null, 2);
-      return lines.join("\n");
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "";
+    // Array of strings → bullet list
+    if (typeof value[0] === "string") {
+      return value.map((v: string) => `  - ${v}`).join("\n");
     }
-    case "company-research": {
-      const lines: string[] = [];
-      const overview = (data.companyOverview || data.overview || "") as string;
-      const size = (data.companySize || data.size || "") as string;
-      const sector = (data.sector || "") as string;
-      const growth = (data.growthStage || "") as string;
-      const news = (data.recentNews || []) as string[];
-      const talking = (data.talkingPoints || []) as string[];
-      const hiring = (data.hiringSignals || []) as string[];
-      const sentiment = (data.employeeSentiment || "") as string;
-      const subSectors = (data.subSectors || []) as string[];
-
-      if (overview) lines.push(`OVERVIEW:\n${overview}`, "");
-      if (size) lines.push(`SIZE: ${size}`);
-      if (sector) lines.push(`SECTOR: ${sector}${subSectors.length ? ` (${subSectors.join(", ")})` : ""}`);
-      if (growth) lines.push(`STAGE: ${growth}`);
-      if (sentiment) lines.push(`EMPLOYEE SENTIMENT: ${sentiment}`);
-      lines.push("");
-      if (Array.isArray(news) && news.length) {
-        lines.push("RECENT NEWS:", ...news.map((n: string) => `  - ${n}`), "");
-      }
-      if (Array.isArray(hiring) && hiring.length) {
-        lines.push("HIRING SIGNALS:", ...hiring.map((s: string) => `  - ${s}`), "");
-      }
-      if (Array.isArray(talking) && talking.length) {
-        lines.push("TALKING POINTS FOR APPLICATION:", ...talking.map((p: string) => `  - ${p}`));
-      }
-      if (lines.length <= 2) return JSON.stringify(data, null, 2);
-      return lines.join("\n");
-    }
-    case "tailored-cv": {
-      const lines: string[] = [];
-      if (data.summary) lines.push("PROFESSIONAL SUMMARY:", data.summary as string, "");
-      if (Array.isArray(data.experience)) {
-        lines.push("EXPERIENCE:");
-        for (const exp of data.experience as Array<{ company: string; title: string; bullets: string[] }>) {
-          lines.push(`\n${exp.title} at ${exp.company}`);
-          if (Array.isArray(exp.bullets)) {
-            lines.push(...exp.bullets.map((b: string) => `  - ${b}`));
-          }
-        }
-        lines.push("");
-      }
-      if (Array.isArray(data.skills)) {
-        lines.push("SKILLS:", (data.skills as string[]).join(", "));
-      }
-      return lines.join("\n");
-    }
-    case "screening-answers": {
-      const lines: string[] = [];
-      for (const [question, answer] of Object.entries(data)) {
-        if (typeof answer === "string") {
-          lines.push(`Q: ${question}`, `A: ${answer}`, "");
-        }
-      }
-      if (lines.length === 0) return JSON.stringify(data, null, 2);
-      return lines.join("\n");
-    }
-    default:
-      // Generic fallback — try to render any nested object readably
-      return JSON.stringify(data, null, 2);
+    // Array of objects → render each
+    return value.map((v) => renderValue(v, depth + 1)).join("\n\n");
   }
+
+  if (typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    const lines: string[] = [];
+    for (const [key, val] of Object.entries(obj)) {
+      if (val === null || val === undefined || val === "") continue;
+      // Format key: snake_case/camelCase → TITLE CASE
+      const label = key
+        .replace(/([A-Z])/g, " $1")
+        .replace(/[_-]/g, " ")
+        .replace(/\b\w/g, (c) => c.toUpperCase())
+        .trim();
+
+      if (typeof val === "string") {
+        lines.push(`${label.toUpperCase()}:\n${val}\n`);
+      } else if (Array.isArray(val) && val.length > 0 && typeof val[0] === "string") {
+        lines.push(`${label.toUpperCase()}:\n${val.map((v: string) => `  - ${v}`).join("\n")}\n`);
+      } else if (typeof val === "object" && !Array.isArray(val)) {
+        lines.push(`${label.toUpperCase()}:\n${renderValue(val, depth + 1)}\n`);
+      } else if (Array.isArray(val)) {
+        lines.push(`${label.toUpperCase()}:\n${renderValue(val, depth + 1)}\n`);
+      } else {
+        lines.push(`${label.toUpperCase()}: ${String(val)}\n`);
+      }
+    }
+    return lines.join("\n");
+  }
+
+  return String(value);
 }
 
 export function ApplicationPackageClient({
