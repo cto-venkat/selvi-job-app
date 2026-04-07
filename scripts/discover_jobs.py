@@ -89,6 +89,39 @@ ADZUNA_EXCLUDE = (
     "mechanical electrical lecturer professor"
 )
 
+# ── WhatsApp Config ─────────────────────────────────────
+
+WHATSAPP_TOKEN = "EAAU4uo4HCuABRN280ytR52MQfES6EHsXfNy5GFkZAzZCVCgWFZCbDx0cFHskXDp0PJmT161BsUmLRhvVrobs5j63vYqPab4h43KJEp03cG8zfZCaVV8BHypvaGekq4q2ZAYFHnYKduVvQoOecIYksHMegEGyojTzVD6PZCFCqcAeCAzZBxDy4a6FF9FB9T1bfJ5ojFP8mDMuv8ZAjB5pRC75it1Ne7FXpg27ZBZAeZASHEipkN6L21AHl3ZB6qn8ySDeSAoHP6bQMlyWOLrRZAAcYwjsq"
+WHATSAPP_PHONE_ID = "1029967786872407"
+WHATSAPP_RECIPIENTS = {
+    "76f15f33-9a1e-4408-b718-676a313cce93": "447767958049",  # Selvi -> Venkat's phone for now
+    "48d629f3-1b10-4262-b50f-166176a82dc7": "447767958049",  # Venkat
+}
+
+
+def send_whatsapp(to: str, message: str):
+    """Send a WhatsApp text message."""
+    payload = json.dumps({
+        "messaging_product": "whatsapp",
+        "to": to,
+        "type": "text",
+        "text": {"body": message},
+    }).encode()
+
+    req = urllib.request.Request(
+        f"https://graph.facebook.com/v22.0/{WHATSAPP_PHONE_ID}/messages",
+        data=payload,
+        method="POST",
+    )
+    req.add_header("Authorization", f"Bearer {WHATSAPP_TOKEN}")
+    req.add_header("Content-Type", "application/json")
+
+    try:
+        urllib.request.urlopen(req, timeout=10, context=ssl_ctx)
+    except Exception as e:
+        print(f"  WhatsApp send error: {e}")
+
+
 DRY_RUN = "--dry-run" in sys.argv
 SOURCE_FILTER = None
 for i, arg in enumerate(sys.argv):
@@ -738,6 +771,44 @@ def main():
                 time.sleep(0.5)
 
     print(f"{datetime.now()}: Done. {total_found} found, {total_new} new jobs inserted.")
+
+    # Send WhatsApp notifications for new jobs
+    if total_new > 0 and not DRY_RUN:
+        # Get new jobs per tenant (inserted in last 5 minutes)
+        for tenant_id, filt in TENANT_FILTERS.items():
+            recipient = WHATSAPP_RECIPIENTS.get(tenant_id)
+            if not recipient:
+                continue
+
+            new_jobs_sql = (
+                f"SELECT title, company, source FROM jobs "
+                f"WHERE tenant_id = '{tenant_id}' "
+                f"AND discovered_at > NOW() - INTERVAL '5 minutes' "
+                f"ORDER BY discovered_at DESC LIMIT 10"
+            )
+            raw = db_exec(new_jobs_sql)
+            if not raw.strip():
+                continue
+
+            lines = [l for l in raw.strip().split("\n") if l.strip()]
+            if not lines:
+                continue
+
+            msg_lines = [f"🔔 {len(lines)} new {filt['name']} jobs found:\n"]
+            for line in lines[:8]:
+                parts = line.split("|")
+                if len(parts) >= 2:
+                    title = parts[0].strip()
+                    company = parts[1].strip()
+                    msg_lines.append(f"• {title} — {company}")
+
+            if len(lines) > 8:
+                msg_lines.append(f"\n+{len(lines) - 8} more")
+
+            msg_lines.append(f"\n📋 View all: https://app.deploy.apiloom.io/dashboard/jobs")
+
+            send_whatsapp(recipient, "\n".join(msg_lines))
+            print(f"  WhatsApp sent to {filt['name']}: {len(lines)} new jobs")
 
 
 if __name__ == "__main__":
