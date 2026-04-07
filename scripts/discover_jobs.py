@@ -496,6 +496,128 @@ def fetch_linkedin(config: dict) -> list:
     return jobs
 
 
+# ── Firecrawl Source (TotalJobs + CV-Library) ───────────
+
+FIRECRAWL_KEY = "fc-03df5ddce46244da9e5d5b926bcddb0a"
+
+FIRECRAWL_URLS = {
+    "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi
+        ("https://www.totaljobs.com/jobs/learning-and-development-manager/in-berkshire?radius=30", "totaljobs"),
+        ("https://www.totaljobs.com/jobs/head-of-learning-and-development/in-london?radius=15", "totaljobs"),
+        ("https://www.cv-library.co.uk/search-jobs?q=learning+and+development+manager&geo=Berkshire&distance=30", "cv-library"),
+        ("https://www.cv-library.co.uk/search-jobs?q=head+of+learning+development&geo=London&distance=15", "cv-library"),
+    ],
+    "48d629f3-1b10-4262-b50f-166176a82dc7": [  # Venkat
+        ("https://www.totaljobs.com/jobs/cto/in-london", "totaljobs"),
+        ("https://www.totaljobs.com/jobs/vp-of-engineering/in-london", "totaljobs"),
+        ("https://www.totaljobs.com/jobs/director-of-engineering/in-london", "totaljobs"),
+        ("https://www.cv-library.co.uk/search-jobs?q=CTO&geo=London&distance=15&salarymin=200000", "cv-library"),
+        ("https://www.cv-library.co.uk/search-jobs?q=VP+engineering&geo=London&distance=15", "cv-library"),
+    ],
+}
+
+
+def fetch_firecrawl(tenant_id: str) -> list:
+    """Scrape job boards via Firecrawl API."""
+    if not FIRECRAWL_KEY:
+        return []
+
+    urls = FIRECRAWL_URLS.get(tenant_id, [])
+    all_jobs = []
+
+    for url, source_name in urls:
+        try:
+            payload = json.dumps({
+                "url": url,
+                "formats": ["markdown"],
+                "waitFor": 3000,
+            }).encode()
+
+            req = urllib.request.Request(
+                "https://api.firecrawl.dev/v2/scrape",
+                data=payload,
+                method="POST",
+            )
+            req.add_header("Authorization", f"Bearer {FIRECRAWL_KEY}")
+            req.add_header("Content-Type", "application/json")
+
+            resp = urllib.request.urlopen(req, timeout=30, context=ssl_ctx)
+            data = json.loads(resp.read())
+
+            if not data.get("success"):
+                continue
+
+            md = data.get("data", {}).get("markdown", "")
+            if not md:
+                continue
+
+            # Parse job titles from markdown — both sites use **title** or ## [title] patterns
+            import re as re_mod
+
+            # TotalJobs pattern: [Job Title](url) or **Job Title**
+            jobs_found = []
+
+            if source_name == "totaljobs":
+                # TotalJobs uses links with job titles
+                matches = re_mod.findall(
+                    r'\[([^\]]{10,100})\]\((https://www\.totaljobs\.com/job/[^\)]+)\)',
+                    md,
+                )
+                for title, link in matches[:25]:
+                    # Try to extract company from nearby text
+                    idx = md.find(link)
+                    context = md[idx:idx + 300] if idx > 0 else ""
+                    company_match = re_mod.search(r'\n([A-Z][^\n]{2,50})\n', context)
+                    company = company_match.group(1).strip() if company_match else "Unknown"
+
+                    jobs_found.append({
+                        "title": title.strip(),
+                        "company": company,
+                        "url": link,
+                    })
+
+            elif source_name == "cv-library":
+                # CV-Library uses **title** bold patterns with links
+                matches = re_mod.findall(
+                    r'\*\*\[?([^\]*]{10,100})\]?\*\*',
+                    md,
+                )
+                links = re_mod.findall(
+                    r'\((https://www\.cv-library\.co\.uk/job/[^\)]+)\)',
+                    md,
+                )
+                for i, title in enumerate(matches[:25]):
+                    link = links[i] if i < len(links) else ""
+                    jobs_found.append({
+                        "title": title.strip(),
+                        "company": "Unknown",
+                        "url": link,
+                    })
+
+            for j in jobs_found:
+                all_jobs.append({
+                    "tenant_id": tenant_id,
+                    "title": j["title"],
+                    "company": j["company"],
+                    "location": "UK",
+                    "description": "",
+                    "url": j["url"],
+                    "salary_min": None,
+                    "salary_max": None,
+                    "contract_type": "",
+                    "category": "",
+                    "posted_at": "",
+                    "source": source_name,
+                })
+
+            time.sleep(2)  # Rate limit Firecrawl
+
+        except Exception as e:
+            print(f"  Firecrawl error ({url[:50]}...): {e}")
+
+    return all_jobs
+
+
 # ── Main ────────────────────────────────────────────────
 
 def main():
@@ -551,6 +673,21 @@ def main():
                     f"{len(jobs)} found, {len(relevant)} relevant, {new} new"
                 )
             time.sleep(3)  # Be gentle with LinkedIn
+
+    # Firecrawl scraping (TotalJobs, CV-Library)
+    if not SOURCE_FILTER or SOURCE_FILTER in ("firecrawl", "totaljobs", "cv-library"):
+        for tenant_id in TENANT_FILTERS:
+            tenant_name = TENANT_FILTERS[tenant_id]["name"]
+            jobs = fetch_firecrawl(tenant_id)
+            relevant = [j for j in jobs if is_relevant(tenant_id, j["title"])]
+            new = sum(1 for j in relevant if insert_job(j))
+            total_found += len(jobs)
+            total_new += new
+            if jobs:
+                print(
+                    f"  [{tenant_name}] Firecrawl (TotalJobs+CV-Library): "
+                    f"{len(jobs)} found, {len(relevant)} relevant, {new} new"
+                )
 
     # Greenhouse / Lever company boards (not config-driven, runs once per tenant)
     if not SOURCE_FILTER or SOURCE_FILTER in ("greenhouse", "lever", "company"):
