@@ -109,7 +109,7 @@ Focus on UK job market conventions. Be specific with suggestions, not generic. R
 
   try {
     const response = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-3-haiku-20240307",
       max_tokens: 4096,
       messages: [{ role: "user", content: prompt }],
     });

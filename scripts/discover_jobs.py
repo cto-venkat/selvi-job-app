@@ -54,6 +54,7 @@ TENANT_FILTERS = {
     },
     "48d629f3-1b10-4262-b50f-166176a82dc7": {  # Venkat - Senior Eng Leadership ONLY
         "name": "Venkat",
+        "min_salary": 150000,  # Reject jobs with known salary below £150K
         "patterns": re.compile(
             # Must explicitly be software/technology engineering leadership
             r"\bCTO\b|chief.technology.officer|"
@@ -272,13 +273,17 @@ def insert_job(job: dict) -> bool:
     return "INSERT 0 1" in result or result == ""
 
 
-def is_relevant(tenant_id: str, title: str) -> bool:
+def is_relevant(tenant_id: str, title: str, salary_max: int | None = None) -> bool:
     """Check if job title is relevant for this tenant."""
     filt = TENANT_FILTERS.get(tenant_id)
     if not filt:
         return True  # No filter = accept all
     # Check exclusions first
     if filt.get("exclude") and filt["exclude"].search(title):
+        return False
+    # Check minimum salary if known (skip jobs that are clearly below target)
+    min_salary = filt.get("min_salary", 0)
+    if min_salary and salary_max and salary_max < min_salary:
         return False
     return bool(filt["patterns"].search(title))
 

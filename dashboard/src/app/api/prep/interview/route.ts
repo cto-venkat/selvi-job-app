@@ -115,7 +115,7 @@ export async function POST(request: Request) {
   try {
     // Get company research first
     const companyResponse = await anthropic.messages.create({
-      model: "claude-haiku-4-5-20251001",
+      model: "claude-3-haiku-20240307",
       max_tokens: 2048,
       messages: [{ role: "user", content: companyPrompt }],
     });
@@ -178,7 +178,7 @@ Return JSON with this structure:
 Be specific to this company and role. Reference real facts where available. Match STAR stories to predicted questions where relevant.`;
 
     const prepResponse = await anthropic.messages.create({
-      model: "claude-sonnet-4-5-20241022",
+      model: "claude-3-haiku-20240307",
       max_tokens: 4096,
       messages: [{ role: "user", content: prepPrompt }],
     });
