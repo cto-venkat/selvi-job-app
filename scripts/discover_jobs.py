@@ -12,6 +12,7 @@ Usage:
 
 import json
 import hashlib
+import os
 import re
 import sys
 import time
@@ -25,9 +26,9 @@ from datetime import datetime
 
 # ── Config ──────────────────────────────────────────────
 
-ADZUNA_APP_ID = "778c1749"
-ADZUNA_APP_KEY = "f3360c492bb951f7b94e4aa507c99739"
-REED_API_KEY = "51056518-3f43-4944-9888-34b92c1dae34"
+ADZUNA_APP_ID = os.environ.get("ADZUNA_APP_ID", "")
+ADZUNA_APP_KEY = os.environ.get("ADZUNA_APP_KEY", "")
+REED_API_KEY = os.environ.get("REED_API_KEY", "")
 
 # Tenant relevance filters (title must match at least one pattern)
 TENANT_FILTERS = {
@@ -101,8 +102,8 @@ ADZUNA_EXCLUDE = (
 
 # ── WhatsApp Config ─────────────────────────────────────
 
-WHATSAPP_TOKEN = "EAAU4uo4HCuABRN280ytR52MQfES6EHsXfNy5GFkZAzZCVCgWFZCbDx0cFHskXDp0PJmT161BsUmLRhvVrobs5j63vYqPab4h43KJEp03cG8zfZCaVV8BHypvaGekq4q2ZAYFHnYKduVvQoOecIYksHMegEGyojTzVD6PZCFCqcAeCAzZBxDy4a6FF9FB9T1bfJ5ojFP8mDMuv8ZAjB5pRC75it1Ne7FXpg27ZBZAeZASHEipkN6L21AHl3ZB6qn8ySDeSAoHP6bQMlyWOLrRZAAcYwjsq"
-WHATSAPP_PHONE_ID = "1029967786872407"
+WHATSAPP_TOKEN = os.environ.get("WHATSAPP_TOKEN", "")
+WHATSAPP_PHONE_ID = os.environ.get("WHATSAPP_PHONE_ID", "")
 WHATSAPP_RECIPIENTS = {
     "76f15f33-9a1e-4408-b718-676a313cce93": "447767958049",  # Selvi -> Venkat's phone for now
     "48d629f3-1b10-4262-b50f-166176a82dc7": "447767958049",  # Venkat
@@ -591,7 +592,7 @@ def fetch_linkedin(config: dict) -> list:
 
 # ── Firecrawl Source (TotalJobs + CV-Library) ───────────
 
-FIRECRAWL_KEY = "fc-03df5ddce46244da9e5d5b926bcddb0a"
+FIRECRAWL_KEY = os.environ.get("FIRECRAWL_KEY", "")
 
 FIRECRAWL_URLS = {
     "76f15f33-9a1e-4408-b718-676a313cce93": [  # Selvi - L&D

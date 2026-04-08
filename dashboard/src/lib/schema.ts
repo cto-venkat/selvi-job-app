@@ -96,12 +96,10 @@ export const cvPackages = pgTable("cv_packages", {
   id: uuid("id").primaryKey().defaultRandom(),
   tenantId: uuid("tenant_id"),
   jobId: uuid("job_id"),
-  jobTitle: text("job_title"),
-  company: text("company"),
   cvType: text("cv_type"),
+  cvContent: text("cv_content"),
   matchPercentage: integer("match_percentage"),
   status: text("status"),
-  highlights: jsonb("highlights"),
   createdAt: timestamp("created_at", { withTimezone: true }).defaultNow(),
 });
 

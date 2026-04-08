@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export async function GET() {
 
   try {
     const result = await db.execute(
-      `SELECT candidate_profile, search_config FROM tenants WHERE id = '${session.tenantId}'`
+      sql`SELECT candidate_profile, search_config FROM tenants WHERE id = ${session.tenantId}`
     );
     const row = result.rows[0] as Record<string, unknown> | undefined;
 
@@ -46,19 +47,19 @@ export async function PUT(request: Request) {
     const body = await request.json();
     const { candidateProfile, searchConfig } = body;
 
-    // Update candidate_profile and search_config JSONB columns via raw SQL
+    // Update candidate_profile and search_config JSONB columns via parameterized SQL
     // These columns exist in Postgres but not in the Drizzle schema
     if (candidateProfile !== undefined && searchConfig !== undefined) {
       await db.execute(
-        `UPDATE tenants SET candidate_profile = '${JSON.stringify(candidateProfile).replace(/'/g, "''")}'::jsonb, search_config = '${JSON.stringify(searchConfig).replace(/'/g, "''")}'::jsonb WHERE id = '${session.tenantId}'`
+        sql`UPDATE tenants SET candidate_profile = ${JSON.stringify(candidateProfile)}::jsonb, search_config = ${JSON.stringify(searchConfig)}::jsonb WHERE id = ${session.tenantId}`
       );
     } else if (candidateProfile !== undefined) {
       await db.execute(
-        `UPDATE tenants SET candidate_profile = '${JSON.stringify(candidateProfile).replace(/'/g, "''")}'::jsonb WHERE id = '${session.tenantId}'`
+        sql`UPDATE tenants SET candidate_profile = ${JSON.stringify(candidateProfile)}::jsonb WHERE id = ${session.tenantId}`
       );
     } else if (searchConfig !== undefined) {
       await db.execute(
-        `UPDATE tenants SET search_config = '${JSON.stringify(searchConfig).replace(/'/g, "''")}'::jsonb WHERE id = '${session.tenantId}'`
+        sql`UPDATE tenants SET search_config = ${JSON.stringify(searchConfig)}::jsonb WHERE id = ${session.tenantId}`
       );
     }
 

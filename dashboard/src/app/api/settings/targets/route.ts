@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
+import { sql } from "drizzle-orm";
 
 export const dynamic = "force-dynamic";
 
@@ -12,7 +13,7 @@ export async function GET() {
 
   try {
     const result = await db.execute(
-      `SELECT search_config FROM tenants WHERE id = '${session.tenantId}'`
+      sql`SELECT search_config FROM tenants WHERE id = ${session.tenantId}`
     );
     const row = result.rows[0] as Record<string, unknown> | undefined;
     const searchConfig = (row?.search_config as Record<string, unknown>) || {};
@@ -36,14 +37,14 @@ export async function PUT(request: Request) {
 
     // Read existing search_config, merge targetCompanies into it
     const result = await db.execute(
-      `SELECT search_config FROM tenants WHERE id = '${session.tenantId}'`
+      sql`SELECT search_config FROM tenants WHERE id = ${session.tenantId}`
     );
     const row = result.rows[0] as Record<string, unknown> | undefined;
     const existing = (row?.search_config as Record<string, unknown>) || {};
     const updated = { ...existing, targetCompanies };
 
     await db.execute(
-      `UPDATE tenants SET search_config = '${JSON.stringify(updated).replace(/'/g, "''")}'::jsonb WHERE id = '${session.tenantId}'`
+      sql`UPDATE tenants SET search_config = ${JSON.stringify(updated)}::jsonb WHERE id = ${session.tenantId}`
     );
 
     return NextResponse.json({ success: true, targetCompanies });

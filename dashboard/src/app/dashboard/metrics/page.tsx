@@ -98,16 +98,13 @@ export default function MetricsPage() {
       a.download = "metrics-export.csv";
       a.click();
       URL.revokeObjectURL(url);
-      console.log("Exported CSV");
     } else {
-      console.log("PDF export requested (would generate PDF)");
     }
   }
 
   function handleShare() {
     const summary = `JobPilot Metrics Summary\nResponse Rate: ${data[data.length - 1]?.responseRate}%\nGhosting Rate: ${data[data.length - 1]?.ghostingRate}%\nApplications (latest week): ${data[data.length - 1]?.applications}`;
     navigator.clipboard.writeText(summary);
-    console.log("Report summary copied to clipboard");
   }
 
   function handleSetGoal(key: string) {
@@ -119,12 +116,10 @@ export default function MetricsPage() {
     }));
     setEditingGoal(null);
     setGoalInput("");
-    console.log("Goal updated:", key, "=", value);
   }
 
   function handleSourceClick(source: string) {
     setSourceFilter(sourceFilter === source ? null : source);
-    console.log("Source filter:", sourceFilter === source ? "cleared" : source);
   }
 
   const dateRangeOptions: { key: DateRange; label: string }[] = [

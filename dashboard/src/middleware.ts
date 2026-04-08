@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 import { jwtVerify } from "jose";
 
 const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "jobpilot-dev-secret-change-in-prod"
+  process.env.JWT_SECRET || ""
 );
 const COOKIE_NAME = "jobpilot_session";
 

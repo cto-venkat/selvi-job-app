@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { tenants } from "@/lib/schema";
-import { eq } from "drizzle-orm";
+import { eq, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import type { UserProfile } from "@/lib/prep/types";
 
@@ -23,7 +23,7 @@ async function getUserProfile(tenantId: string): Promise<{ profile: UserProfile;
 
   const tenant = rows[0];
   const profileResult = await db.execute(
-    `SELECT candidate_profile, search_config FROM tenants WHERE id = '${tenantId}'`
+    sql`SELECT candidate_profile, search_config FROM tenants WHERE id = ${tenantId}`
   );
   const row = profileResult.rows[0] as Record<string, unknown> | undefined;
   const candidateProfile = (row?.candidate_profile as Record<string, unknown>) || {};

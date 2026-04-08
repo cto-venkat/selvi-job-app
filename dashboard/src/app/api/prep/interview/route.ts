@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import { getSession } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { tenants, interviews, starStories } from "@/lib/schema";
-import { eq, and } from "drizzle-orm";
+import { eq, and, sql } from "drizzle-orm";
 import Anthropic from "@anthropic-ai/sdk";
 import { buildCompanyResearchPrompt } from "@/lib/prep/company-researcher";
 import type { UserProfile } from "@/lib/prep/types";
@@ -24,7 +24,7 @@ async function getUserProfile(tenantId: string): Promise<UserProfile | null> {
 
   const tenant = rows[0];
   const profileResult = await db.execute(
-    `SELECT candidate_profile, search_config FROM tenants WHERE id = '${tenantId}'`
+    sql`SELECT candidate_profile, search_config FROM tenants WHERE id = ${tenantId}`
   );
   const row = profileResult.rows[0] as Record<string, unknown> | undefined;
   const profile = (row?.candidate_profile as Record<string, unknown>) || {};
@@ -98,8 +98,9 @@ export async function POST(request: Request) {
   // Try to get job description if there's a linked application
   let jobDescription = "";
   if (interview.companyName && interview.roleTitle) {
+    const companyPattern = `%${interview.companyName || ""}%`;
     const jobResult = await db.execute(
-      `SELECT description FROM jobs WHERE tenant_id = '${session.tenantId}' AND company ILIKE '%${(interview.companyName || "").replace(/'/g, "''")}%' LIMIT 1`
+      sql`SELECT description FROM jobs WHERE tenant_id = ${session.tenantId} AND company ILIKE ${companyPattern} LIMIT 1`
     );
     if (jobResult.rows[0]) {
       jobDescription = (jobResult.rows[0] as Record<string, unknown>).description as string || "";

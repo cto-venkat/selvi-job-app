@@ -31,9 +31,9 @@ async function getUserProfile(tenantId: string): Promise<UserProfile | null> {
 
   const tenant = rows[0];
   // candidate_profile is stored as JSONB on the tenants table in the DB
-  // but not in the Drizzle schema — use raw SQL
+  // but not in the Drizzle schema — use parameterized SQL
   const profileResult = await db.execute(
-    `SELECT candidate_profile, search_config FROM tenants WHERE id = '${tenantId}'`
+    sql`SELECT candidate_profile, search_config FROM tenants WHERE id = ${tenantId}`
   );
   const row = profileResult.rows[0] as Record<string, unknown> | undefined;
   const profile = (row?.candidate_profile as Record<string, unknown>) || {};

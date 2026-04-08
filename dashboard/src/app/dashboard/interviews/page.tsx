@@ -281,7 +281,6 @@ export default function InterviewsPage() {
       locationType: "video",
       link: "",
     });
-    console.log("Added interview:", iv);
   }
 
   function handleMarkComplete(id: string) {
@@ -296,21 +295,18 @@ export default function InterviewsPage() {
     setCompletingId(null);
     setCompletionOutcome("pending");
     setCompletionNotes("");
-    console.log("Marked complete:", id, completionOutcome);
   }
 
   function handleCancel(id: string) {
     setCancelledIds((prev) => new Set([...prev, id]));
     setCancellingId(null);
     setCancelReason("");
-    console.log("Cancelled interview:", id, "Reason:", cancelReason);
   }
 
   function handleSaveNote(id: string) {
     setNotes((prev) => ({ ...prev, [id]: noteText }));
     setEditingNoteId(null);
     setNoteText("");
-    console.log("Note saved for:", id);
   }
 
   function handleSaveDebrief(id: string) {
@@ -323,7 +319,6 @@ export default function InterviewsPage() {
     }));
     setDebriefEditId(null);
     setDebriefText("");
-    console.log("Debrief saved for:", id);
   }
 
   if (loading) {
@@ -968,7 +963,6 @@ export default function InterviewsPage() {
                             variant="outline"
                             size="xs"
                             onClick={() => {
-                              console.log("Reschedule requested:", iv.id);
                             }}
                           >
                             <Calendar className="h-3 w-3" />

@@ -4,9 +4,10 @@ import { db } from "./db";
 import { tenants } from "./schema";
 import { eq } from "drizzle-orm";
 
-const JWT_SECRET = new TextEncoder().encode(
-  process.env.JWT_SECRET || "jobpilot-dev-secret-change-in-prod"
-);
+if (!process.env.JWT_SECRET) {
+  throw new Error("JWT_SECRET environment variable is required");
+}
+const JWT_SECRET = new TextEncoder().encode(process.env.JWT_SECRET);
 const COOKIE_NAME = "jobpilot_session";
 
 export type SessionUser = {
@@ -18,11 +19,11 @@ export type SessionUser = {
 // Hardcoded users — personal tool, 2 users only
 const USERS: Record<string, { password: string; tenantSlug: string }> = {
   "chellamma.uk@gmail.com": {
-    password: process.env.AUTH_PASSWORD_SELVI || "changeme",
+    password: process.env.AUTH_PASSWORD_SELVI || "",
     tenantSlug: "selvi",
   },
   "venkat.fts@gmail.com": {
-    password: process.env.AUTH_PASSWORD_VENKAT || "changeme",
+    password: process.env.AUTH_PASSWORD_VENKAT || "",
     tenantSlug: "venkat",
   },
 };

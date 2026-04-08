@@ -55,7 +55,7 @@ export async function getApplications(tenantId: string) {
     SELECT id, tenant_id, job_id, company_name, job_title,
            pipeline_track, current_state, applied_at,
            follow_up_count, next_follow_up_at, interview_count,
-           discovery_source, is_active
+           discovery_source
     FROM applications
     WHERE tenant_id = ${tenantId}
     ORDER BY applied_at DESC NULLS LAST
@@ -68,7 +68,7 @@ export async function getApplicationById(tenantId: string, appId: string) {
     SELECT id, tenant_id, job_id, company_name, job_title,
            pipeline_track, current_state, applied_at,
            follow_up_count, next_follow_up_at, interview_count,
-           discovery_source, is_active
+           discovery_source
     FROM applications
     WHERE tenant_id = ${tenantId} AND id = ${appId}
     LIMIT 1
@@ -157,7 +157,7 @@ export async function getEmails(tenantId: string, limit = 100) {
   const result = await db.execute(sql`
     SELECT e.*, ec.classification, ec.confidence, ec.is_urgent
     FROM emails e
-    LEFT JOIN email_classifications ec ON ec.email_id = e.id AND ec.tenant_id = e.tenant_id
+    LEFT JOIN email_classifications ec ON ec.email_id = e.id
     WHERE e.tenant_id = ${tenantId}
     ORDER BY e.date DESC NULLS LAST
     LIMIT ${limit}
@@ -169,7 +169,7 @@ export async function getEmailById(tenantId: string, emailId: string) {
   const result = await db.execute(sql`
     SELECT e.*, ec.classification, ec.confidence, ec.is_urgent
     FROM emails e
-    LEFT JOIN email_classifications ec ON ec.email_id = e.id AND ec.tenant_id = e.tenant_id
+    LEFT JOIN email_classifications ec ON ec.email_id = e.id
     WHERE e.tenant_id = ${tenantId} AND e.id = ${emailId}
     LIMIT 1
   `);
